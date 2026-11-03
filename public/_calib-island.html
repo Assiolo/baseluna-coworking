@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>calib island</title>
+<link rel="stylesheet" href="style.css?v=20261102q">
+<style>body{margin:0;background:#111;padding:24px}#dk{max-width:960px;margin:auto}</style>
+<div id="dk"></div>
+<script src="floorplan.js?v=20261102q"></script>
+<script>
+const plan={desks:[
+ {id:'A1',label:'A1',zone:'latoA'},{id:'A2',label:'A2',zone:'latoA'},{id:'A3',label:'A3',zone:'latoA'},
+ {id:'B1',label:'B1',zone:'latoB'},{id:'B2',label:'B2',zone:'latoB'},{id:'B3',label:'B3',zone:'latoB'}
+]};
+FloorPlan.render(document.getElementById('dk'), plan, ()=>'free', ()=>{});
+</script>

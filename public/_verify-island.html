@@ -1,0 +1,19 @@
+<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verify Isola</title>
+<link rel="stylesheet" href="style.css?v=20261103c">
+<style>
+body{margin:0;background:#050504;min-height:100vh;padding:24px;box-sizing:border-box}
+#dk{max-width:900px;margin:0 auto}
+h1{color:#fff;font:600 16px system-ui;margin:0 0 12px}
+</style></head><body>
+<h1>Verify island v20261103c</h1>
+<div id="dk"></div>
+<script src="floorplan.js?v=20261103c"></script>
+<script>
+const plan={desks:[
+  {id:'A1',label:'A1',zone:'latoA'},{id:'A2',label:'A2',zone:'latoA'},{id:'A3',label:'A3',zone:'latoA'},
+  {id:'B1',label:'B1',zone:'latoB'},{id:'B2',label:'B2',zone:'latoB'},{id:'B3',label:'B3',zone:'latoB'}
+]};
+const busy=new Set(['B1','B2']);
+FloorPlan.render(document.getElementById('dk'), plan, id=>busy.has(id)?'busy':'free', id=>console.log('pick',id));
+</script></body></html>

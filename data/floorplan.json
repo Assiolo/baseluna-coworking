@@ -1,0 +1,90 @@
+{
+  "_note": "Modulo piantina sostituibile. image = vista assonometrica dello studio; desks x,y in % sull'immagine (centro scrivania). cover = area % da velare (vecchie scrivanie della render). Il flusso usa solo gli id.",
+  "name": "Base Luna Studio — Isola 6 postazioni",
+  "image": "/media/floorplan.png",
+  "imgW": 819,
+  "imgH": 660,
+  "cover": {
+    "x": 26,
+    "y": 14,
+    "w": 27,
+    "h": 25
+  },
+  "zones": [
+    {
+      "id": "latoA",
+      "label": "Lato A"
+    },
+    {
+      "id": "latoB",
+      "label": "Lato B"
+    }
+  ],
+  "areas": [
+    {
+      "label": "Maker lab",
+      "x": 22,
+      "y": 58
+    },
+    {
+      "label": "Lounge",
+      "x": 56,
+      "y": 52
+    },
+    {
+      "label": "Ingresso",
+      "x": 82,
+      "y": 20
+    }
+  ],
+  "desks": [
+    {
+      "id": "A1",
+      "label": "A1",
+      "zone": "latoA",
+      "x": 37,
+      "y": 23.5
+    },
+    {
+      "id": "A2",
+      "label": "A2",
+      "zone": "latoA",
+      "x": 43,
+      "y": 25.3
+    },
+    {
+      "id": "A3",
+      "label": "A3",
+      "zone": "latoA",
+      "x": 49,
+      "y": 27.1
+    },
+    {
+      "id": "B1",
+      "label": "B1",
+      "zone": "latoB",
+      "x": 34,
+      "y": 30
+    },
+    {
+      "id": "B2",
+      "label": "B2",
+      "zone": "latoB",
+      "x": 40,
+      "y": 31.8
+    },
+    {
+      "id": "B3",
+      "label": "B3",
+      "zone": "latoB",
+      "x": 46,
+      "y": 33.6
+    }
+  ],
+  "pricing": {
+    "mattina": 12,
+    "pomeriggio": 12,
+    "giornata": 20,
+    "mensile": 290
+  }
+}

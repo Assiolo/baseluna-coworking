@@ -1,0 +1,16 @@
+<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pagamento · Base Luna</title><link rel="stylesheet" href="/style.css">
+<style>.pp{max-width:520px;margin:60px auto;padding:40px;text-align:center}.pp .amt{font-size:52px;font-weight:700;margin:10px 0}.pp.satispay{border-top:4px solid #F94C43}.pp.paypal{border-top:4px solid #0070E0}.big{display:block;padding:18px;border-radius:16px;color:#fff;font-weight:700;font-size:18px;text-decoration:none;margin:18px 0}.satispay .big{background:#F94C43}.paypal .big{background:#0070E0}.wait{padding:18px;border:1px dashed rgba(255,255,255,.3);border-radius:16px;margin:18px 0}</style></head>
+<body><div class="bg"><i></i><i></i><i></i></div><div class="glass card pp" id="p">Caricamento…</div>
+<script>
+const M=location.pathname.split('/').pop(),G=new URLSearchParams(location.search).get('g'),N={satispay:'Satispay',paypal:'PayPal'}[M]||M,P=document.getElementById('p');
+fetch('/api/pay/'+G).then(r=>r.json()).then(p=>{if(p.error){P.innerHTML='<h2>'+p.error+'</h2><a class="btn" href="/">Torna al sito</a>';return}
+P.className='glass card pp '+M;
+P.innerHTML=`<div class="logo">Base <span>Luna</span></div><p class="sub">Pagamento con ${N}</p><div class="amt">€${p.amount}</div>
+<p>Scrivania <b>${p.deskId}</b> · ${p.mode==='mensile'?'Pacchetto mensile '+p.dates[0].slice(0,7)+' ('+p.days+' giorni)':p.dates[0]+' · '+p.slot}</p>
+<p>Stato: <span class="pill off">in attesa di pagamento</span></p>
+${p.link?`<p class="sub">Il pagamento si apre in una nuova scheda.</p><a class="big" href="${p.link}" target="_blank" rel="noopener noreferrer">Apri ${N}</a>`:`<div class="wait"><b>In attesa del link di pagamento ${N}</b><br><small>Lo studio sta collegando il proprio link ${N}. La tua postazione è riservata: potrai pagare da «Le mie prenotazioni» appena il link è attivo, oppure lo studio ti contatterà.</small></div>`}
+${p.status==='segnalato dal cliente'?'<p>Pagamento segnalato ✓ — lo studio confermerà a breve.</p>':p.link?'<button class="btn ghost" id="done">Ho pagato — avvisa lo studio</button>':''}
+<p><small class="sub">La prenotazione diventa <b>confermata</b> solo quando lo studio registra il pagamento.</small></p><a class="btn ghost" href="/">Torna al sito</a>`;
+const d=document.getElementById('done');if(d)d.onclick=()=>fetch('/api/pay/'+G+'/reported',{method:'POST'}).then(()=>location.reload());
+if(p.link&&p.status==='in attesa'){try{window.open(p.link,'_blank','noopener,noreferrer')}catch(e){}}})
+</script></body></html>

@@ -1,0 +1,144 @@
+{
+ "users": [
+  {
+   "id": 1,
+   "name": "Admin Base Luna",
+   "email": "admin@baselunastudio.it",
+   "hash": "$2b$10$oZpaKIZZ.WcDJE1xjuWC8uEFtevf0QX/q8r.rAoTXfX0WCBg3x7Ty",
+   "role": "admin",
+   "active": true,
+   "bio": "",
+   "avatar": "",
+   "title": ""
+  },
+  {
+   "id": 2,
+   "name": "Utente Demo",
+   "email": "demo@baselunastudio.it",
+   "hash": "$2b$10$MhtM5oI7.APeDR71pbebcuTTuclx7q2oe6QS3/I./QqyEMHFBQbX6",
+   "role": "user",
+   "active": true,
+   "bio": "",
+   "avatar": "",
+   "title": ""
+  },
+  {
+   "id": 5,
+   "name": "verdesca",
+   "email": "verdinalauretta@io.io",
+   "hash": "$2b$10$Izw7iy/oZAsNsxB7EoXKmuqzMU042XKVR1/Tz8dTbIhSfdC/6kBDO",
+   "role": "user",
+   "active": true,
+   "bio": "Audit e consulenze",
+   "title": "Consulente",
+   "avatar": "/uploads/avatars/u5-1793649884823.jpg"
+  }
+ ],
+ "bookings": [
+  {
+   "id": "704f7070",
+   "group": "eb53a46a",
+   "userId": 1,
+   "deskId": "A1",
+   "date": "2026-11-10",
+   "slot": "giornata",
+   "mode": "giornaliero",
+   "payment": "contanti",
+   "status": "annullata",
+   "price": 20,
+   "created": "2026-11-03T08:29:35.093Z"
+  },
+  {
+   "id": "c5c19dd3",
+   "group": "212016b0",
+   "userId": 1,
+   "deskId": "A2",
+   "date": "2026-11-10",
+   "slot": "mattina",
+   "mode": "giornaliero",
+   "payment": "bonifico",
+   "status": "annullata",
+   "price": 12,
+   "created": "2026-11-03T08:29:35.094Z"
+  },
+  {
+   "id": "b3a010f7",
+   "group": "07ecb11a",
+   "userId": 1,
+   "deskId": "B1",
+   "date": "2026-11-15",
+   "slot": "pomeriggio",
+   "mode": "giornaliero",
+   "payment": "paypal",
+   "status": "annullata",
+   "price": 12,
+   "created": "2026-11-03T08:29:35.094Z"
+  }
+ ],
+ "sessions": {
+  "39f9b538d6e51e21dd518670187e78e2fec73f7f217fbf4e": 2,
+  "e6d05827c178e53b5ef5da90c9a7b89efb865709752d0077": 2,
+  "cc28a2da04c9a052edfae2630c41db9e2874b1b98f15c909": 2,
+  "b41bc333dbf7dbe74687679131008ed234fe8892fb9bf28f": 2,
+  "820388dba6fb9663b9ccea946ef11ed421dd123728d84db6": 2,
+  "548a1c33bb3207eed720c2471475fff18af95e7d260021e5": 2,
+  "a175038d38a1030e348c59f3a4b90bb7ac4cfac22063e4a9": 2,
+  "e23ab56e5944d13ae897b529895ff75f9e8bc95c888db375": 2,
+  "79e6f44cadcf2f594e19c8a7e283340a38e3bf57f9113d91": 1,
+  "0a8b3d45bfd009f133291ec4c133d753e5ff1e6c0d476aa4": 1,
+  "337a87f359c69c150db4f3f187a0abcec3782de221c661a3": 1,
+  "a85ca468d3164255ff3eb7a0fa0eaa0e1bec5dd5b0d847e8": 1,
+  "6ea6bb9bc0d74aaf9a7b2e13847077497c100cd0f84254b1": 1,
+  "5a3db85931b8ba3c6f3cd8fa500600e2dd4960e11410034b": 1,
+  "667e2e5f158b6ec102a0a613c53c1147ba4df3054c8cefff": 1,
+  "3734f590ee491c44970621abf11d51680970214a39fee9a9": 1,
+  "e15c96d29f23aa649ef1b0f01248248c3ea9421fc2329890": 1
+ },
+ "payments": [
+  {
+   "group": "eb53a46a",
+   "userId": 1,
+   "deskId": "A1",
+   "dates": [
+    "2026-11-10",
+    "2026-11-10"
+   ],
+   "days": 1,
+   "mode": "giornaliero",
+   "slot": "giornata",
+   "amount": 20,
+   "method": "contanti",
+   "status": "in attesa"
+  },
+  {
+   "group": "212016b0",
+   "userId": 1,
+   "deskId": "A2",
+   "dates": [
+    "2026-11-10",
+    "2026-11-10"
+   ],
+   "days": 1,
+   "mode": "giornaliero",
+   "slot": "mattina",
+   "amount": 12,
+   "method": "bonifico",
+   "status": "in attesa"
+  },
+  {
+   "group": "07ecb11a",
+   "userId": 1,
+   "deskId": "B1",
+   "dates": [
+    "2026-11-15",
+    "2026-11-15"
+   ],
+   "days": 1,
+   "mode": "giornaliero",
+   "slot": "pomeriggio",
+   "amount": 12,
+   "method": "paypal",
+   "status": "in attesa"
+  }
+ ]
+}

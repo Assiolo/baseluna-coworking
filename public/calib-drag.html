@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Calibra isola · Base Luna</title>
+<style>
+  :root{--bg:#0a0a0a;--fg:#fff;--acc:#FF5B00}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,sans-serif}
+  header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.1)}
+  header b{font-size:15px}
+  header .hint{opacity:.65;font-size:12px;flex:1;min-width:200px}
+  button,label{background:#1c1c1c;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:8px 12px;cursor:pointer}
+  button.primary{background:var(--acc);border-color:var(--acc);font-weight:700}
+  button:hover{filter:brightness(1.08)}
+  label.chk{display:flex;align-items:center;gap:6px;font-size:12px;opacity:.85}
+  #stage{position:relative;width:min(1100px,100vw);margin:16px auto;line-height:0;user-select:none;touch-action:none}
+  #stage img{width:100%;height:auto;display:block;border-radius:12px;pointer-events:none}
+  #svg{position:absolute;inset:0;width:100%;height:100%}
+  .poly{cursor:move;stroke:#fff;stroke-width:.35;fill-opacity:.38}
+  .poly.on{stroke-width:.55;filter:drop-shadow(0 0 4px rgba(255,255,255,.5))}
+  .lab{font-size:2.2px;font-weight:800;fill:#fff;paint-order:stroke fill;stroke:rgba(0,0,0,.55);stroke-width:.15px;pointer-events:none;text-anchor:middle;dominant-baseline:central}
+  .h{fill:#fff;stroke:#000;stroke-width:.15;cursor:grab;r:.7}
+  .h:active{cursor:grabbing}
+  #out{max-width:1100px;margin:0 auto 24px;padding:0 16px}
+  pre{background:#151515;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px;overflow:auto;font-size:11px;line-height:1.35}
+  #msg{font-size:12px;min-height:1.2em}
+  #msg.ok{color:#4ade80} #msg.err{color:#f87171}
+</style>
+</head>
+<body>
+<header>
+  <b>Calibra isola</b>
+  <span class="hint">Trascina il poligono o i pallini agli angoli del vetro. Ordine angoli: alto-sinistra → alto-destra → basso-destra → basso-sinistra.</span>
+  <label class="chk"><input type="checkbox" id="snap"> Snap 0.5%</label>
+  <button type="button" id="reset">Reset</button>
+  <button type="button" id="copy">Copia HOTS</button>
+  <button type="button" class="primary" id="save">Salva in floorplan.js</button>
+</header>
+<div id="stage">
+  <img id="img" src="/media/island-ref.png?v=calib" alt="Isola riferimento" draggable="false">
+  <svg id="svg" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+</div>
+<div id="out"><div id="msg"></div><pre id="pre"></pre></div>
+<script>
+const IDS=['A1','A2','A3','B1','B2','B3'];
+const COLORS={A1:'#FF5B00',A2:'#22c55e',A3:'#3b82f6',B1:'#ec4899',B2:'#eab308',B3:'#a855f7'};
+const DEFAULT={
+  A1:[[29.0,30.5],[39.0,29.2],[40.8,41.2],[28.2,42.5]],
+  A2:[[43.0,29.8],[55.5,29.0],[57.0,40.5],[44.0,41.5]],
+  A3:[[58.5,30.5],[72.0,32.8],[73.5,43.5],[59.5,41.8]],
+  B1:[[27.0,45.2],[39.5,43.8],[41.5,57.0],[27.5,59.0]],
+  B2:[[42.0,44.2],[56.0,43.5],[58.0,56.5],[43.2,57.8]],
+  B3:[[58.0,44.8],[72.5,47.5],[74.0,59.5],[59.0,57.5]]
+};
+let hots=JSON.parse(JSON.stringify(DEFAULT));
+let active='A1', drag=null; // {id, kind:'poly'|'h', hi, ox,oy, startPts}
+const svg=document.getElementById('svg');
+const stage=document.getElementById('stage');
+const snapEl=document.getElementById('snap');
+const msg=document.getElementById('msg');
+const pre=document.getElementById('pre');
+
+function sn(v){return snapEl.checked?Math.round(v*2)/2:+v.toFixed(1)}
+function ptsStr(id){return hots[id].map(p=>p.join(',')).join(' ')}
+function cen(id){const p=hots[id];return [p.reduce((s,a)=>s+a[0],0)/4,p.reduce((s,a)=>s+a[1],0)/4]}
+
+function render(){
+  let html='';
+  for(const id of IDS){
+    const on=id===active?' on':'';
+    html+=`<polygon class="poly${on}" data-id="${id}" points="${ptsStr(id)}" fill="${COLORS[id]}"></polygon>`;
+    const [cx,cy]=cen(id);
+    html+=`<text class="lab" x="${cx}" y="${cy}">${id}</text>`;
+  }
+  // handles for active
+  hots[active].forEach((p,i)=>{
+    html+=`<circle class="h" data-id="${active}" data-hi="${i}" cx="${p[0]}" cy="${p[1]}" r="0.85"></circle>`;
+  });
+  svg.innerHTML=html;
+  pre.textContent=hotsBlock();
+}
+
+function hotsBlock(){
+  let s='_HOTS:{\n';
+  for(const id of IDS){
+    s+=`  ${id}:[${hots[id].map(p=>`[${sn(p[0]).toFixed(1)},${sn(p[1]).toFixed(1)}]`).join(',')}],\n`;
+  }
+  return s+'}';
+}
+
+function xy(e){
+  const r=stage.getBoundingClientRect();
+  const x=(e.clientX-r.left)/r.width*100;
+  const y=(e.clientY-r.top)/r.height*100;
+  return [Math.max(0,Math.min(100,x)), Math.max(0,Math.min(100,y))];
+}
+
+svg.addEventListener('pointerdown',e=>{
+  const t=e.target;
+  if(t.classList.contains('h')){
+    active=t.dataset.id; drag={kind:'h',id:active,hi:+t.dataset.hi}; e.target.setPointerCapture(e.pointerId);
+  } else if(t.classList.contains('poly')){
+    active=t.dataset.id;
+    const [x,y]=xy(e);
+    drag={kind:'poly',id:active,ox:x,oy:y,start:hots[active].map(p=>p.slice())};
+    e.target.setPointerCapture(e.pointerId);
+  } else return;
+  render(); e.preventDefault();
+});
+svg.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  const [x,y]=xy(e);
+  if(drag.kind==='h'){
+    hots[drag.id][drag.hi]=[sn(x),sn(y)];
+  } else {
+    const dx=x-drag.ox, dy=y-drag.oy;
+    hots[drag.id]=drag.start.map(([px,py])=>[sn(px+dx),sn(py+dy)]);
+  }
+  render();
+});
+svg.addEventListener('pointerup',()=>{drag=null});
+svg.addEventListener('pointercancel',()=>{drag=null});
+
+document.getElementById('reset').onclick=()=>{hots=JSON.parse(JSON.stringify(DEFAULT));active='A1';msg.textContent='Reset ai valori di partenza.';msg.className='';render()};
+document.getElementById('copy').onclick=async()=>{
+  try{await navigator.clipboard.writeText(hotsBlock());msg.textContent='HOTS copiati negli appunti.';msg.className='ok'}
+  catch{msg.textContent='Copia manuale dal riquadro sotto.';msg.className='err'}
+};
+document.getElementById('save').onclick=async()=>{
+  msg.textContent='Salvataggio…';msg.className='';
+  try{
+    const body={hots:{}};
+    for(const id of IDS) body.hots[id]=hots[id].map(p=>[+sn(p[0]).toFixed(1),+sn(p[1]).toFixed(1)]);
+    const r=await fetch('/api/hots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.error||r.statusText);
+    msg.textContent='Salvato in floorplan.js ('+j.version+'). Ricarica Prenota con Cmd-Shift-R.';
+    msg.className='ok';
+  }catch(err){msg.textContent='Errore: '+err.message;msg.className='err'}
+};
+
+// load current from server if available
+fetch('/api/hots').then(r=>r.json()).then(j=>{
+  if(j&&j.hots){hots=j.hots;msg.textContent='Caricati hotspot attuali'+(j.version?' ('+j.version+')':'')+'.';}
+}).catch(()=>{}).finally(render);
+</script>
+</body>
+</html>
