@@ -2,7 +2,7 @@
   "name": "baseluna-coworking",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "build": "npm install --omit=dev"
