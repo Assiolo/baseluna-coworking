@@ -188,7 +188,7 @@ textarea{width:100%;padding:13px 14px;border-radius:14px;color:#fff;font:inherit
 .seg,.btn.ghost{background:rgba(255,255,255,.07)!important;border:.75px solid rgba(255,255,255,.3);backdrop-filter:blur(16px)}
 .btn{box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 8px 24px rgba(255,91,0,.35)}
 /* video bg everywhere (app pages too) */
-body.app-bg{background:#050504 url(/media/studio-bg-poster.jpg) center/cover fixed}
+body.app-bg{background:#050504 url(/media/dashboard-bg.jpg) center/cover fixed}
 .appvid{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;filter:saturate(1.1)}
 .appshade{position:fixed;inset:0;z-index:-1;background:radial-gradient(80% 60% at 20% 0%,rgba(255,91,0,.25),transparent 60%),linear-gradient(180deg,rgba(5,5,4,.35),rgba(5,5,4,.6))}
 /* welcome */
