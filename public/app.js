@@ -1,3 +1,4 @@
+// v20261103i: admin Pacchetti prezzi
 // v20261103h: admin mese/giorno + elimina account
 // v20261103d: bonifico+contanti mailto+hover
 // v20261102u-home: mie prenotazioni + scrivania + riepilogo mese in home
@@ -211,7 +212,7 @@ function calendar(){const[y,m]=S.month.split('-').map(Number),n=new Date(y,m,0).
  return`<label>Disponibilità del mese</label><div class="cal">${h}</div>`}
 async function mineView(){const b=await api('/api/bookings/mine');$('#m').innerHTML=`<h1>Le mie prenotazioni</h1><p class="sub">${b.filter(x=>x.status==='confermata').length} attive</p><div class="glass card"><table><tr><th>Data</th><th>Scrivania</th><th>Fascia</th><th>Tipo</th><th>Pagamento</th><th>Stato</th><th></th></tr>${b.map(x=>`<tr><td>${x.date}</td><td>${x.deskId}</td><td>${SLOT[x.slot]}</td><td>${x.mode}</td><td>${PAY[x.payment]||x.payment}</td><td><span class="pill ${x.status!=='confermata'?'off':''}">${x.status}</span></td><td>${x.status!=='annullata'?`${x.status==='in attesa di pagamento'?`<a class="btn sm" href="/pay/${x.payment}?g=${x.group}" target="_blank" rel="noopener">Paga</a> `:''}<button class="btn sm ghost" data-id="${x.id}">Annulla</button>`:''}</td></tr>`).join('')||'<tr><td colspan=7>Nessuna prenotazione</td></tr>'}</table></div>`;
  $('#m').querySelectorAll('[data-id]').forEach(e=>e.onclick=async()=>{await api('/api/bookings/'+e.dataset.id,{method:'DELETE'});mineView()})}
-async function adminView(){const[u,b,pp]=await Promise.all([api('/api/admin/users'),api('/api/admin/bookings'),api('/api/admin/payments')]);
+async function adminView(){const[u,b,pp,pr]=await Promise.all([api('/api/admin/users'),api('/api/admin/bookings'),api('/api/admin/payments'),api('/api/admin/pricing')]);
  const active=b.filter(x=>x.status!=='annullata');
  const byMonth={};
  active.forEach(x=>{const mo=(x.date||'').slice(0,7)||'????-??';(byMonth[mo]=byMonth[mo]||[]).push(x)});
@@ -230,6 +231,14 @@ async function adminView(){const[u,b,pp]=await Promise.all([api('/api/admin/user
   return `<div class="adm-month glass card"><div class="adm-month-h"><h3>${esc(mo)}</h3><span class="sub">${rows.length} prenotaz.</span><button class="btn sm ghost danger" data-cancel-month="${esc(mo)}">Annulla tutto il mese</button></div>${dayBlocks||'<p class="sub">Nessuna</p>'}</div>`;
  }).join('')||'<div class="glass card"><p class="sub">Nessuna prenotazione attiva</p></div>';
  $('#m').innerHTML=`<h1>Admin</h1><p class="sub">${u.length} account · ${active.filter(x=>x.status==='confermata').length} confermate · ${active.length} attive</p>
+ <div class="glass card"><h2>Pacchetti</h2><p class="sub">Prezzi backend (data/floorplan.json). Landing e Prenota li leggono da qui.</p>
+ <div class="row" style="gap:12px;flex-wrap:wrap">
+  <div><label>Mattina 9–13 (€)</label><input type="number" min="0" step="0.01" id="pr-mattina" value="${pr.mattina??''}"></div>
+  <div><label>Pomeriggio 14–19 (€)</label><input type="number" min="0" step="0.01" id="pr-pomeriggio" value="${pr.pomeriggio??''}"></div>
+  <div><label>Giornata intera (€)</label><input type="number" min="0" step="0.01" id="pr-giornata" value="${pr.giornata??''}"></div>
+  <div><label>Mensile (€)</label><input type="number" min="0" step="0.01" id="pr-mensile" value="${pr.mensile??''}"></div>
+ </div>
+ <button class="btn" id="pr-save" style="margin-top:12px">Salva prezzi</button> <span id="pr-msg" class="sub"></span></div>
  <div class="glass card"><h2>Pagamenti da registrare</h2><p class="sub">Contanti da riscuotere, bonifici, Satispay/PayPal in attesa. Confermata solo dopo «Pagato».</p><table><tr><th>Utente</th><th>Scrivania</th><th>Periodo</th><th>Metodo</th><th>Importo</th><th>Stato</th><th></th></tr>${pp.map(p=>`<tr><td>${esc(p.user)}</td><td>${esc(p.deskId)}</td><td>${esc(p.dates[0])}${p.days>1?' → '+esc(p.dates[1]):''}</td><td>${p.method==='contanti'?'<b>Contanti da riscuotere</b>':esc(PAY[p.method]||p.method)}</td><td>€${p.amount}</td><td>${esc(p.status)}</td><td><button class="btn sm" data-p="${p.group}">Pagato ✓</button></td></tr>`).join('')||'<tr><td colspan=7>Nessuno</td></tr>'}</table></div>
  <div class="glass card"><h2>Account</h2><table><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Prenot.</th><th>Stato</th><th></th></tr>${u.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.email)}</td><td>${esc(x.role)}</td><td>${x.bookings}</td><td><span class="pill ${x.active?'':'off'}">${x.active?'attivo':'disattivato'}</span></td><td>${x.id!==ME.id?`<button class="btn sm ghost" data-u="${x.id}" data-a="${x.active?0:1}">${x.active?'Disattiva':'Riattiva'}</button> <button class="btn sm ghost" data-r="${x.id}" data-role="${x.role==='admin'?'user':'admin'}">${x.role==='admin'?'Rendi utente':'Rendi admin'}</button> <button class="btn sm ghost danger" data-del="${x.id}">Elimina account</button>`:'(tu)'}</td></tr>`).join('')}</table></div>
  <h2 style="margin-top:28px">Prenotazioni per mese / giorno</h2>
@@ -242,6 +251,8 @@ async function adminView(){const[u,b,pp]=await Promise.all([api('/api/admin/user
  m.querySelectorAll('[data-del]').forEach(e=>e.onclick=async()=>{if(!confirm('Eliminare definitivamente questo account?'))return;await api('/api/admin/users/'+e.dataset.del,{method:'DELETE'});adminView()});
  m.querySelectorAll('[data-cancel-day]').forEach(e=>e.onclick=async()=>{if(!confirm('Annullare TUTTE le prenotazioni del '+e.dataset.cancelDay+'?'))return;await api('/api/admin/bookings/cancel-day',{method:'POST',body:{date:e.dataset.cancelDay}});adminView()});
  m.querySelectorAll('[data-cancel-month]').forEach(e=>e.onclick=async()=>{if(!confirm('Annullare TUTTE le prenotazioni di '+e.dataset.cancelMonth+'?'))return;await api('/api/admin/bookings/cancel-month',{method:'POST',body:{month:e.dataset.cancelMonth}});adminView()});
+ const save=$('#pr-save'),msg=$('#pr-msg');
+ if(save)save.onclick=async()=>{msg.textContent='Salvo…';try{const body={mattina:+$('#pr-mattina').value,pomeriggio:+$('#pr-pomeriggio').value,giornata:+$('#pr-giornata').value,mensile:+$('#pr-mensile').value};const out=await api('/api/admin/pricing',{method:'PATCH',body});PLAN=await api('/api/floorplan');PLAN.pricing=out;msg.textContent='Prezzi aggiornati';}catch(err){msg.textContent=err.message||'Errore'}};
 }
 const esc=t=>String(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const avatar=(cls='')=>ME.avatar?`<img class="av ${cls}" src="${ME.avatar}" alt="">`:`<span class="av ${cls} ini">${esc(ME.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</span>`;
