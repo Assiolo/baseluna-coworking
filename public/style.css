@@ -936,3 +936,7 @@ body.app-bg #m .hcard-wrap{overflow:visible!important}
 .adm-day-h b{font-size:15px}
 .btn.danger{color:#fecaca!important;border-color:rgba(248,113,113,.35)!important}
 .btn.danger:hover{background:rgba(239,68,68,.18)!important}
+
+/* dashboard logged-in: static photo bg (no looping video) */
+.appbg-photo{position:fixed;inset:0;width:100%;height:100%;z-index:-2;pointer-events:none;background-position:center;background-size:cover;background-repeat:no-repeat;filter:saturate(1.08) contrast(1.04)}
+body.app-bg .appvid{display:none}
