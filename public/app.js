@@ -1,3 +1,4 @@
+// v20261103l: fix bg sotto .bg opaco
 // v20261103k: dashboard-bg.jpg utente
 // v20261103j: dashboard sfondo foto
 // v20261103i: admin Pacchetti prezzi
@@ -51,7 +52,7 @@ function startLiveClock(root=document){
   _clockTimer=setInterval(tick,1000);
 }
 let LANDED=false;
-function render(){document.body.classList.toggle('app-bg',!!ME);if(!ME)return LANDED?authView('login'):landing();const dashBg='/media/dashboard-bg.jpg';A.innerHTML=`<div class="appbg-photo" style="background-image:url('${dashBg}')" aria-hidden="true"></div><div class="appshade"></div><nav class="glass"><b id="goHome" style="cursor:pointer">Base <span>Luna</span> Coworking</b>${avatar()}${[['home','Home'],['prenota','Prenota'],['mie','Le mie prenotazioni'],['profilo','Il mio profilo'],...(ME.role==='admin'?[['admin','Admin']]:[])].map(([k,l])=>`<a class="${view===k?'on':''}" data-v="${k}">${l}</a>`).join('')}<a id="out">Esci</a></nav><main id="m"></main>`;
+function render(){document.body.classList.toggle('app-bg',!!ME);if(!ME)return LANDED?authView('login'):landing();A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><b id="goHome" style="cursor:pointer">Base <span>Luna</span> Coworking</b>${avatar()}${[['home','Home'],['prenota','Prenota'],['mie','Le mie prenotazioni'],['profilo','Il mio profilo'],...(ME.role==='admin'?[['admin','Admin']]:[])].map(([k,l])=>`<a class="${view===k?'on':''}" data-v="${k}">${l}</a>`).join('')}<a id="out">Esci</a></nav><main id="m"></main>`;
  A.querySelectorAll('[data-v]').forEach(a=>a.onclick=()=>{view=a.dataset.v;render()});$('#out').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}ME=null;LANDED=false;view='home';document.body.classList.remove('app-bg');render()};
  $('#goHome').onclick=()=>{view='home';render()};
  ({home:homeView,prenota:bookView,mie:mineView,admin:adminView,profilo:profileView})[view]()}

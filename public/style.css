@@ -938,5 +938,12 @@ body.app-bg #m .hcard-wrap{overflow:visible!important}
 .btn.danger:hover{background:rgba(239,68,68,.18)!important}
 
 /* dashboard logged-in: static photo bg (no looping video) */
-.appbg-photo{position:fixed;inset:0;width:100%;height:100%;z-index:-2;pointer-events:none;background-position:center;background-size:cover;background-repeat:no-repeat;filter:saturate(1.08) contrast(1.04)}
+body.app-bg .bg{display:none!important}
+body.app-bg{background-color:#050504!important;background-image:url(/media/dashboard-bg.jpg)!important;background-size:cover!important;background-position:center!important;background-attachment:fixed!important;background-repeat:no-repeat!important;animation:none!important}
+.appbg-photo{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;overflow:hidden}
+.appbg-photo img{width:100%;height:100%;object-fit:cover;display:block;filter:saturate(1.1) contrast(1.05)}
+.appshade{z-index:0;background:linear-gradient(180deg,rgba(5,5,4,.28),rgba(5,5,4,.45))!important}
+body.app-bg nav,body.app-bg main,body.app-bg .appshade,body.app-bg .appbg-photo{position:relative}
+body.app-bg .appbg-photo,body.app-bg .appshade{position:fixed;z-index:0}
+body.app-bg nav.glass,body.app-bg main{position:relative;z-index:1}
 body.app-bg .appvid{display:none}
