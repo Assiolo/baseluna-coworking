@@ -1,0 +1,46 @@
+{
+  "_note": "Esempio di forma, senza hash reali. Non rinominarlo in db.json se vuoi partire da zero: al primo avvio, se le tabelle sono vuote e data/db.json esiste, viene importato una sola volta. Senza quel file il primo account registrato diventa admin. floorplan.json e config.json restano file, non stanno nel database.",
+  "users": [
+    {
+      "id": 1,
+      "name": "Admin di esempio",
+      "email": "admin@example.invalid",
+      "hash": "<bcrypt-hash>",
+      "role": "admin",
+      "active": true,
+      "bio": "",
+      "avatar": "",
+      "title": ""
+    }
+  ],
+  "bookings": [
+    {
+      "id": "aaaaaaaa",
+      "group": "bbbbbbbb",
+      "userId": 1,
+      "deskId": "A1",
+      "date": "2026-11-10",
+      "slot": "mattina",
+      "mode": "giornaliero",
+      "payment": "bonifico",
+      "status": "da saldare",
+      "price": 12,
+      "created": "2026-11-03T08:00:00.000Z"
+    }
+  ],
+  "sessions": {},
+  "payments": [
+    {
+      "group": "bbbbbbbb",
+      "userId": 1,
+      "deskId": "A1",
+      "dates": ["2026-11-10", "2026-11-10"],
+      "days": 1,
+      "mode": "giornaliero",
+      "slot": "mattina",
+      "amount": 12,
+      "method": "bonifico",
+      "status": "in attesa"
+    }
+  ]
+}

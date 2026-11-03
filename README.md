@@ -1,7 +1,14 @@
 # Base Luna Coworking
-Avvio: `npm install && node server.js` → http://localhost:5173 (PORT configurabile).
-Demo: admin@baselunastudio.it / admin123 · demo@baselunastudio.it / demo123
-Dati: `data/db.json` (utenti con password bcrypt, sessioni, prenotazioni, pagamenti). Cancellalo per reset.
+Avvio: `npm install`, poi `DATABASE_URL=postgres://… node server.js` → http://localhost:5173 (`PORT` configurabile). Senza `DATABASE_URL` il processo esce subito: non c'è più il ripiego su JSON.
+
+Dati account su Postgres (Neon, stringa pooled in `DATABASE_URL`, con `sslmode=require`): utenti, sessioni, prenotazioni, pagamenti. Le tabelle si creano all'avvio se mancano. Il primo account registrato diventa admin se non ne esiste già uno.
+
+`data/db.json` non è più nel repository (è in `.gitignore`). Se al primo avvio le tabelle sono vuote e quel file è ancora sul disco, viene importato una sola volta; se c'è già almeno una riga, l'import si salta. La forma del file è in `data/db.example.json` (senza hash veri): non copiarlo su `db.json` se vuoi che la prima registrazione diventi admin. Per ripartire da zero svuota le tabelle Postgres, non un file.
+
+Restano file: `data/floorplan.json`, `data/config.json`, `data/notifications.json`.
+
+Keep-alive (Neon free si spegne dopo ~5 minuti di inattività): `GET /api/health` esegue `SELECT 1` e risponde `{ok:true}` oppure `{ok:false}` con 503. Con `DATABASE_URL` impostata il processo ripete `SELECT 1` ogni 4 minuti finché il servizio è acceso.
+
 Piantina sostituibile: `data/floorplan.json` (zones, desks con x/y/w/h, pricing) + `public/floorplan.js` (contratto `FloorPlan.render(el, plan, state, onPick)`). Il flusso di prenotazione usa solo gli id delle scrivanie.
 Pagamenti (demo, nessun gateway): Fatturazione, PayPal, Contanti, Satispay.
 
