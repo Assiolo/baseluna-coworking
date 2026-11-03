@@ -936,7 +936,7 @@ body.app-bg{background:#050504!important;animation:none!important}
 body.app-bg .bg{display:none!important}
 body.app-bg::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:url(/media/dashboard-bg.jpg) center center / cover no-repeat;filter:saturate(1.12) contrast(1.05)}
 body.app-bg .appbg-photo{display:none!important}
-body.app-bg .appshade{position:fixed;inset:0;z-index:0;pointer-events:none;background:rgba(5,5,4,.22)!important}
+body.app-bg .appshade{position:fixed;inset:0;z-index:0;pointer-events:none;background:rgba(0,0,0,.5)!important}
 body.app-bg #app{position:relative;z-index:1;background:transparent!important}
 body.app-bg nav.glass,body.app-bg main{position:relative;z-index:2;background:transparent}
 body.app-bg .appvid{display:none!important}
