@@ -7,8 +7,6 @@ const CF=path.join(D,'config.json'),NF=path.join(D,'notifications.json');
 const cfg=()=>{try{return JSON.parse(fs.readFileSync(CF))}catch{return{}}};
 const notify=n=>{let a=[];try{a=JSON.parse(fs.readFileSync(NF))}catch{}a.push({...n,created:new Date().toISOString(),sent:false});fs.writeFileSync(NF,JSON.stringify(a,null,1))};
 const linkFor=(m,amt)=>{const u=(cfg()[m+'PaymentUrl']||'').trim();if(!u)return null;return u.replace(/\{amount_cents\}/g,Math.round(amt*100)).replace(/\{amount\}/g,amt)};
-// No default admin/demo passwords in code. Drop legacy default admin if present.
-(()=>{const drop=u=>u.email==='admin@baselunastudio.it';const gone=db.users.filter(drop);if(gone.length){const ids=new Set(gone.map(u=>u.id));db.users=db.users.filter(u=>!drop(u));Object.keys(db.sessions).forEach(k=>{if(ids.has(db.sessions[k]))delete db.sessions[k]});save();}})();
 const app=express();app.use(express.json({limit:'8mb'}),cp(),express.static(path.join(__dirname,'public')));
 const pub=u=>({id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,bio:u.bio||'',avatar:u.avatar||'',title:u.title||''});
 const me=r=>{const id=db.sessions[r.cookies.sid];const u=db.users.find(x=>x.id===id);return u&&u.active?u:null};
