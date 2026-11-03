@@ -7,14 +7,15 @@ const CF=path.join(D,'config.json'),NF=path.join(D,'notifications.json');
 const cfg=()=>{try{return JSON.parse(fs.readFileSync(CF))}catch{return{}}};
 const notify=n=>{let a=[];try{a=JSON.parse(fs.readFileSync(NF))}catch{}a.push({...n,created:new Date().toISOString(),sent:false});fs.writeFileSync(NF,JSON.stringify(a,null,1))};
 const linkFor=(m,amt)=>{const u=(cfg()[m+'PaymentUrl']||'').trim();if(!u)return null;return u.replace(/\{amount_cents\}/g,Math.round(amt*100)).replace(/\{amount\}/g,amt)};
-if(!db.users.length){db.users.push({id:1,name:'Admin Base Luna',email:'admin@baselunastudio.it',hash:bc.hashSync('admin123',10),role:'admin',active:true},{id:2,name:'Utente Demo',email:'demo@baselunastudio.it',hash:bc.hashSync('demo123',10),role:'user',active:true});save();}
+// No default admin/demo passwords in code. Drop legacy default admin if present.
+(()=>{const drop=u=>u.email==='admin@baselunastudio.it';const gone=db.users.filter(drop);if(gone.length){const ids=new Set(gone.map(u=>u.id));db.users=db.users.filter(u=>!drop(u));Object.keys(db.sessions).forEach(k=>{if(ids.has(db.sessions[k]))delete db.sessions[k]});save();}})();
 const app=express();app.use(express.json({limit:'8mb'}),cp(),express.static(path.join(__dirname,'public')));
 const pub=u=>({id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,bio:u.bio||'',avatar:u.avatar||'',title:u.title||''});
 const me=r=>{const id=db.sessions[r.cookies.sid];const u=db.users.find(x=>x.id===id);return u&&u.active?u:null};
 const auth=(q,s,n)=>(q.u=me(q))?n():s.status(401).json({error:'Non autenticato'});
 const admin=(q,s,n)=>q.u.role==='admin'?n():s.status(403).json({error:'Solo admin'});
 const login=(s,u)=>{const t=crypto.randomBytes(24).toString('hex');db.sessions[t]=u.id;save();s.cookie('sid',t,{httpOnly:true,sameSite:'lax'});s.json(pub(u))};
-app.post('/api/register',(q,s)=>{const{name,email,password}=q.body||{};if(!name||!email||!password||password.length<6)return s.status(400).json({error:'Compila tutti i campi (password min 6)'});if(db.users.find(u=>u.email===email.toLowerCase()))return s.status(409).json({error:'Email già registrata'});const u={id:Math.max(...db.users.map(u=>u.id))+1,name,email:email.toLowerCase(),hash:bc.hashSync(password,10),role:'user',active:true};db.users.push(u);login(s,u)});
+app.post('/api/register',(q,s)=>{const{name,email,password}=q.body||{};if(!name||!email||!password||password.length<6)return s.status(400).json({error:'Compila tutti i campi (password min 6)'});if(db.users.find(u=>u.email===email.toLowerCase()))return s.status(409).json({error:'Email già registrata'});const u={id:db.users.length?Math.max(...db.users.map(u=>u.id))+1:1,name,email:email.toLowerCase(),hash:bc.hashSync(password,10),role:db.users.some(x=>x.role==='admin')?'user':'admin',active:true};db.users.push(u);login(s,u)});
 app.post('/api/login',(q,s)=>{const u=db.users.find(u=>u.email===(q.body.email||'').toLowerCase());if(!u||!bc.compareSync(q.body.password||'',u.hash))return s.status(401).json({error:'Credenziali non valide'});if(!u.active)return s.status(403).json({error:'Account disattivato'});login(s,u)});
 app.post('/api/logout',(q,s)=>{delete db.sessions[q.cookies.sid];save();s.clearCookie('sid').json({ok:1})});
 app.get('/api/me',auth,(q,s)=>s.json(pub(q.u)));
