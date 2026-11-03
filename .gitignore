@@ -2,5 +2,9 @@ node_modules/
 .DS_Store
 *.log
 data/notifications.json
+# Account, sessioni, prenotazioni e pagamenti: vivono su Postgres.
+# Questo file, se presente sul disco al primo avvio con tabelle vuote, viene importato una volta.
+# Non va committato: un deploy lo ricoprirebbe e cancellerebbe gli account creati in produzione.
+data/db.json
 public/uploads/avatars/*
 !public/uploads/avatars/.gitkeep

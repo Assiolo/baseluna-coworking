@@ -2,10 +2,11 @@ Base Luna Coworking — avvio locale
 1. Installa Node.js (https://nodejs.org) se non ce l'hai
 2. Apri il terminale nella cartella baseluna-coworking
 3. npm install
-4. node server.js
-5. Apri http://localhost:5173 nel browser
+4. Imposta DATABASE_URL (Postgres / Neon, meglio l'host pooled). Senza questa variabile il server non parte.
+5. node server.js
+6. Apri http://localhost:5173 nel browser
 
-Demo: demo@baselunastudio.it / demo123
-Admin: admin@baselunastudio.it / admin123
+Il primo account registrato diventa admin, se non ce n'è già uno.
+Account, sessioni, prenotazioni e pagamenti stanno su Postgres, non più in data/db.json.
 
 Link Satispay/PayPal: modifica data/config.json
