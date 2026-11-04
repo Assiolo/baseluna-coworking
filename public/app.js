@@ -1,3 +1,4 @@
+// v20261103q: logo BASELUNA ufficiale in nav, auth e footer
 // v20261103m: bg + colori desk + no reload pick
 // v20261103l: fix bg sotto .bg opaco
 // v20261103k: dashboard-bg.jpg utente
@@ -8,6 +9,15 @@
 // v20261102u-home: mie prenotazioni + scrivania + riepilogo mese in home
 // v20261102s-home: «Oggi in ufficio» senza «ci sono»
 const $=s=>document.querySelector(s),A=document.getElementById('app');
+const LOGO_V='20261103q';
+function brandLogo(){
+  const v=LOGO_V;
+  return `<picture class="brand-pic"><source media="(max-width:700px)" srcset="/media/logo-header-mobile.png?v=${v} 1x, /media/logo-header-mobile@2x.png?v=${v} 2x"><img class="brand-logo" alt="BASELUNA Creative Accelerator Studio" width="181" height="48" src="/media/logo-header-desktop.png?v=${v}" srcset="/media/logo-header-desktop.png?v=${v} 1x, /media/logo-header-desktop@2x.png?v=${v} 2x"></picture>`;
+}
+function footLogo(){
+  const v=LOGO_V;
+  return `<img class="foot-logo" alt="BASELUNA" width="263" height="28" src="/media/logo-footer.png?v=${v}" srcset="/media/logo-footer.png?v=${v} 1x, /media/logo-footer@2x.png?v=${v} 2x">`;
+}
 const api=async(u,o={})=>{const r=await fetch(u,{headers:{'Content-Type':'application/json'},...o,body:o.body&&JSON.stringify(o.body)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Errore');return j};
 const PAY={bonifico:'Bonifico',paypal:'PayPal',contanti:'Contanti',satispay:'Satispay'},SLOT={mattina:'Mattina 9–13',pomeriggio:'Pomeriggio 14–19',giornata:'Giornata intera'};
 const today=()=>new Date().toISOString().slice(0,10);
@@ -53,13 +63,13 @@ function startLiveClock(root=document){
   _clockTimer=setInterval(tick,1000);
 }
 let LANDED=false;
-function render(){document.body.classList.toggle('app-bg',!!ME);if(!ME)return LANDED?authView('login'):landing();A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><b id="goHome" style="cursor:pointer">Base <span>Luna</span> Coworking</b>${avatar()}${[['home','Home'],['prenota','Prenota'],['mie','Le mie prenotazioni'],['profilo','Il mio profilo'],...(ME.role==='admin'?[['admin','Admin']]:[])].map(([k,l])=>`<a class="${view===k?'on':''}" data-v="${k}">${l}</a>`).join('')}<a id="out">Esci</a></nav><main id="m"></main>`;
+function render(){document.body.classList.toggle('app-bg',!!ME);if(!ME)return LANDED?authView('login'):landing();A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><b id="goHome" class="brand">${brandLogo()}</b>${avatar()}${[['home','Home'],['prenota','Prenota'],['mie','Le mie prenotazioni'],['profilo','Il mio profilo'],...(ME.role==='admin'?[['admin','Admin']]:[])].map(([k,l])=>`<a class="${view===k?'on':''}" data-v="${k}">${l}</a>`).join('')}<a id="out">Esci</a></nav><main id="m"></main>`;
  A.querySelectorAll('[data-v]').forEach(a=>a.onclick=()=>{view=a.dataset.v;render()});$('#out').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}ME=null;LANDED=false;view='home';document.body.classList.remove('app-bg');render()};
  $('#goHome').onclick=()=>{view='home';render()};
  ({home:homeView,prenota:bookView,mie:mineView,admin:adminView,profilo:profileView})[view]()}
 function landing(){document.body.classList.remove('app-bg');const P=PLAN.pricing;const vid=SITE.heroVideo?`<video class="bgvid" autoplay muted loop playsinline poster="${SITE.heroImage||''}"><source src="${SITE.heroVideo}" type="video/mp4"></video><div class="bgvid-shade"></div>`:'';A.innerHTML=`<div class="land has-bgvid">
 ${vid}<div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="ring"></div><div class="pill3d"></div>
-<nav class="glass rise"><b class="brand"><i class="dot"></i>Base <span>Luna</span></b><a href="#spazi" class="hide-s">Spazi</a><a href="#prezzi" class="hide-s">Prezzi</a><a data-a="login">Accedi</a><a class="btn sm" data-a="reg">Registrati</a></nav>
+<nav class="glass rise"><b class="brand">${brandLogo()}</b><a href="#spazi" class="hide-s">Spazi</a><a href="#prezzi" class="hide-s">Prezzi</a><a data-a="login">Accedi</a><a class="btn sm" data-a="reg">Registrati</a></nav>
 <header class="hero2"><div class="htxt"><p class="kick rise" style="--d:.1s"><i></i>Damanhur Crea · Creative studio & coworking</p>
 <h1 class="mega rise" style="--d:.2s">Crea<br><em>sulla</em> <span class="grad">Luna.</span></h1>
 <p class="lead rise" style="--d:.35s">Scrivanie in uno studio creativo dove design, AI e idee condividono lo stesso tavolo. Scegli la postazione, prenota un giorno o un mese intero.</p>
@@ -90,12 +100,12 @@ return `<div class="hc-live"><div class="hc-top"><small>Oggi in studio</small></
 <div class="glass tile reveal inspire"><p class="inspire-lead">Tra Design, Coworking e Damanhur Crea a Vidracco, Base Luna è pensato come un luogo dove le idee respirano: luce, silenzio quando serve, e una community Focus che lavora fianco a fianco.</p>
 <div class="inspire-grid"><div class="glass chip-inline">Coffee break</div><div class="glass chip-inline">Cucinino condiviso</div><div class="glass chip-inline">Bagno condiviso</div><div class="glass chip-inline">Wi-Fi 1 Gbit</div></div>
 <button class="btn sm" data-a="reg" style="align-self:flex-start;margin-top:18px">Vieni in studio →</button></div></section>
-<footer class="foot"><b>Base <span>Luna</span> Studio</b><small>Torino · baselunastudio.it</small></footer></div>`;
+<footer class="foot"><span class="foot-brand">${footLogo()}</span><small>Torino · baselunastudio.it</small></footer></div>`;
  A.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{LANDED=true;authView(b.dataset.a)});
  const L=A.querySelector('.land'),T=A.querySelector('#tilt'),RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
  const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:.15});L.querySelectorAll('.reveal').forEach((r,i)=>{r.style.setProperty('--d',(i%3)*.12+'s');io.observe(r)});
  if(!RM)L.onmousemove=e=>{const x=e.clientX/innerWidth-.5,y=e.clientY/innerHeight-.5;L.querySelectorAll('.orb,.ring,.pill3d').forEach((s,i)=>s.style.translate=`${x*(i+1)*-22}px ${y*(i+1)*-22}px`);if(T)T.style.transform=`perspective(1000px) rotateY(${x*14}deg) rotateX(${-y*14}deg)`;L.style.setProperty('--mx',e.clientX+'px');L.style.setProperty('--my',e.clientY+'px')};startLiveClock(A)}
-function authView(t){document.body.classList.add('app-bg');A.innerHTML=`${SITE.heroVideo?`<video class="appvid" autoplay muted loop playsinline><source src="${SITE.heroVideo}" type="video/mp4"></video>`:''}<div class="appshade"></div><div class="glass auth rise"><a id="back" class="sub" style="cursor:pointer">← Home</a><div class="logo">Base <span>Luna</span></div><p class="sub">Coworking · Torino</p><div class="seg"><button class="${t==='login'?'on':''}" id="tl">Accedi</button><button class="${t==='reg'?'on':''}" id="tr">Registrati</button></div>
+function authView(t){document.body.classList.add('app-bg');A.innerHTML=`${SITE.heroVideo?`<video class="appvid" autoplay muted loop playsinline><source src="${SITE.heroVideo}" type="video/mp4"></video>`:''}<div class="appshade"></div><div class="glass auth rise"><a id="back" class="sub" style="cursor:pointer">← Home</a><div class="logo">${brandLogo()}</div><p class="sub">Coworking · Torino</p><div class="seg"><button class="${t==='login'?'on':''}" id="tl">Accedi</button><button class="${t==='reg'?'on':''}" id="tr">Registrati</button></div>
  <form id="f">${t==='reg'?'<label>Nome e cognome</label><input name="name" required>':''}<label>Email</label><input name="email" type="email" required><label>Password</label><input name="password" type="password" required minlength="6"><div class="err" id="e"></div><button class="btn" style="width:100%">${t==='login'?'Accedi':'Crea account'}</button></form></div>`;
  $('#back').onclick=()=>{LANDED=false;render()};$('#tl').onclick=()=>authView('login');$('#tr').onclick=()=>authView('reg');
  $('#f').onsubmit=async e=>{e.preventDefault();try{ME=await api(t==='login'?'/api/login':'/api/register',{method:'POST',body:Object.fromEntries(new FormData(e.target))});view='home';render()}catch(x){$('#e').textContent=x.message}}}
