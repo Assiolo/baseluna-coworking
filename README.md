@@ -1,19 +1,21 @@
 # Base Luna Coworking
 Avvio: `npm install`, poi `DATABASE_URL=postgres://… node server.js` → http://localhost:5173 (`PORT` configurabile). Senza `DATABASE_URL` il processo esce subito: non c'è più il ripiego su JSON.
 
-Dati account su Postgres (Neon, stringa pooled in `DATABASE_URL`, con `sslmode=require`): utenti, sessioni, prenotazioni, pagamenti. Le tabelle si creano all'avvio se mancano. Il primo account registrato diventa admin se non ne esiste già uno.
+Dati su Postgres (Neon, stringa pooled in `DATABASE_URL`, con `sslmode=require`): utenti (nome, bio, titolo e foto), sessioni, prenotazioni, pagamenti, prezzi dei pacchetti. Le tabelle si creano all'avvio se mancano. Il primo account registrato diventa admin se non ne esiste già uno.
 
 `data/db.json` non è più nel repository (è in `.gitignore`). Se al primo avvio le tabelle sono vuote e quel file è ancora sul disco, viene importato una sola volta; se c'è già almeno una riga, l'import si salta. La forma del file è in `data/db.example.json` (senza hash veri): non copiarlo su `db.json` se vuoi che la prima registrazione diventi admin. Per ripartire da zero svuota le tabelle Postgres, non un file.
 
-Restano file: `data/floorplan.json`, `data/config.json`, `data/notifications.json`.
+Restano file: geometria di `data/floorplan.json` (immagine, zones, desks), `data/config.json`, `data/notifications.json`. I prezzi dentro `floorplan.json` sono solo il seme: se la tabella `pricing` è vuota vengono copiati una volta all'avvio; un salvataggio admin scrive su Postgres e non riscrive il file. Agli avvii successivi i prezzi già presenti non vengono sovrascritti.
+
+Foto profilo: il caricamento (PNG, JPG o WEBP, max 5 MB) viene ritagliato in un quadrato da massimo 256 px, ricompresso in JPEG e salvato nella tabella `avatars` (`bytes` bytea + `content_type`). `users.avatar` è l'URL pubblico `/api/users/:id/avatar?v=…`. Se al boot un utente ha ancora un percorso `/uploads/avatars/…` e il file è sul disco, i byte vengono importati una volta con la stessa compressione; se il file non c'è più, il campo si svuota.
 
 Keep-alive (Neon free si spegne dopo ~5 minuti di inattività): `GET /api/health` esegue `SELECT 1` e risponde `{ok:true}` oppure `{ok:false}` con 503. Con `DATABASE_URL` impostata il processo ripete `SELECT 1` ogni 4 minuti finché il servizio è acceso.
 
-Piantina sostituibile: `data/floorplan.json` (zones, desks con x/y/w/h, pricing) + `public/floorplan.js` (contratto `FloorPlan.render(el, plan, state, onPick)`). Il flusso di prenotazione usa solo gli id delle scrivanie.
+Piantina sostituibile: `data/floorplan.json` (zones, desks con x/y) + `public/floorplan.js` (contratto `FloorPlan.render(el, plan, state, onPick)`). Il flusso di prenotazione usa solo gli id delle scrivanie. I prezzi mostrati e addebitati arrivano da Postgres.
 Pagamenti (demo, nessun gateway): Fatturazione, PayPal, Contanti, Satispay.
 
 ## Pagamenti (aggiornamento)
-- Step «1 · Quando» ha due card: **Ingresso giornaliero** e **Pacchetto mensile** (€ `pricing.mensile` in floorplan.json).
+- Step «1 · Quando» ha due card: **Ingresso giornaliero** e **Pacchetto mensile** (€ `pricing.mensile` su Postgres).
 - Nessuna prenotazione è `confermata` prima del pagamento. Satispay/PayPal → `in attesa di pagamento` + redirect a `/pay/<metodo>?g=<id>`. Fatturazione/Contanti → `da saldare`. L'admin clicca «Pagato ✓» in Admin → «Pagamenti da registrare» e la prenotazione diventa `confermata`.
 - **Link di pagamento**: incolla in `data/config.json` i link forniti dallo studio:
   `{ "satispayPaymentUrl": "", "paypalPaymentUrl": "" }`

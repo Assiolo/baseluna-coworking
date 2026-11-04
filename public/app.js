@@ -238,7 +238,7 @@ async function adminView(){const[u,b,pp,pr]=await Promise.all([api('/api/admin/u
   return `<div class="adm-month glass card"><div class="adm-month-h"><h3>${esc(mo)}</h3><span class="sub">${rows.length} prenotaz.</span><button class="btn sm ghost danger" data-cancel-month="${esc(mo)}">Annulla tutto il mese</button></div>${dayBlocks||'<p class="sub">Nessuna</p>'}</div>`;
  }).join('')||'<div class="glass card"><p class="sub">Nessuna prenotazione attiva</p></div>';
  $('#m').innerHTML=`<h1>Admin</h1><p class="sub">${u.length} account · ${active.filter(x=>x.status==='confermata').length} confermate · ${active.length} attive</p>
- <div class="glass card"><h2>Pacchetti</h2><p class="sub">Prezzi backend (data/floorplan.json). Landing e Prenota li leggono da qui.</p>
+ <div class="glass card"><h2>Pacchetti</h2><p class="sub">Prezzi salvati nel database. Landing e Prenota li leggono da qui.</p>
  <div class="row" style="gap:12px;flex-wrap:wrap">
   <div><label>Mattina 9–13 (€)</label><input type="number" min="0" step="0.01" id="pr-mattina" value="${pr.mattina??''}"></div>
   <div><label>Pomeriggio 14–19 (€)</label><input type="number" min="0" step="0.01" id="pr-pomeriggio" value="${pr.pomeriggio??''}"></div>

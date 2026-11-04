@@ -7,6 +7,6 @@ Base Luna Coworking — avvio locale
 6. Apri http://localhost:5173 nel browser
 
 Il primo account registrato diventa admin, se non ce n'è già uno.
-Account, sessioni, prenotazioni e pagamenti stanno su Postgres, non più in data/db.json.
+Account, sessioni, prenotazioni, pagamenti, prezzi dei pacchetti e foto profilo stanno su Postgres, non più su file locali.
 
 Link Satispay/PayPal: modifica data/config.json

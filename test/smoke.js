@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { Client } = require('pg');
+const sharp = require('sharp');
 const ConnectionParameters = require('pg/lib/connection-parameters');
 const { connectionOptions } = require('../db');
 
@@ -145,6 +146,18 @@ async function counts(connectionString) {
   return n;
 }
 
+async function noisePng(width, height) {
+  const raw = Buffer.alloc(width * height * 3);
+  for (let i = 0; i < raw.length; i++) raw[i] = (i * 17 + (i % 251)) % 256;
+  return sharp(raw, { raw: { width, height, channels: 3 } }).png().toBuffer();
+}
+
+async function imageBytes(url) {
+  const res = await fetch(url);
+  const buf = Buffer.from(await res.arrayBuffer());
+  return { status: res.status, type: res.headers.get('content-type') || '', buf };
+}
+
 function weekdayCount(month) {
   const [y, mo] = month.split('-').map(Number);
   let n = 0;
@@ -237,13 +250,24 @@ async function integration(connectionString) {
     await resetSchema(connectionString);
     let adminCookie;
     let userCookie;
-    await withServer(async () => {
+    let adaAvatar;
+    let legacyAvatar;
+    const floorFile = fs.readFileSync(path.join(root, 'data', 'floorplan.json'), 'utf8');
+    const avDir = path.join(root, 'public', 'uploads', 'avatars');
+    await withServer(async (child) => {
       const health = await api(base, '/api/health');
       assert.deepStrictEqual(health.json, { ok: true });
 
+      assert.match(child.log(), /Prezzi pacchetti importati da data\/floorplan\.json/);
       const floor = await api(base, '/api/floorplan');
       assert.strictEqual(floor.status, 200);
       assert.ok(floor.json.desks.some((d) => d.id === 'A1'));
+      assert.strictEqual(floor.json.image, '/media/floorplan.png');
+      assert.strictEqual(floor.json.desks.find((d) => d.id === 'A1').x, 37);
+      assert.strictEqual(floor.json.pricing.mattina, 12);
+      assert.strictEqual(floor.json.pricing.pomeriggio, 12);
+      assert.strictEqual(floor.json.pricing.giornata, 20);
+      assert.strictEqual(floor.json.pricing.mensile, 290);
 
       const anonToday = await api(base, '/api/today');
       assert.strictEqual(anonToday.status, 200);
@@ -287,6 +311,11 @@ async function integration(connectionString) {
       const prof = await api(base, '/api/me/profile', { method: 'PATCH', cookie: userCookie, body: { name: 'Ugo Luna', title: 'Designer', bio: 'ciao' } });
       assert.strictEqual(prof.json.name, 'Ugo Luna');
       assert.strictEqual(prof.json.title, 'Designer');
+      assert.strictEqual(prof.json.bio, 'ciao');
+      const meProf = await api(base, '/api/me', { cookie: userCookie });
+      assert.strictEqual(meProf.json.name, 'Ugo Luna');
+      assert.strictEqual(meProf.json.bio, 'ciao');
+      assert.strictEqual(meProf.json.title, 'Designer');
 
       const unauth = await api(base, '/api/bookings', { method: 'POST', body: {} });
       assert.strictEqual(unauth.status, 401);
@@ -403,6 +432,9 @@ async function integration(connectionString) {
       await api(base, '/api/admin/users/' + ugo.id, { method: 'PATCH', cookie: adminCookie, body: { active: true } });
       const back = await api(base, '/api/login', { method: 'POST', body: { email: 'ugo@example.invalid', password: 'secret2' } });
       assert.strictEqual(back.status, 200);
+      assert.strictEqual(back.json.name, 'Ugo Luna');
+      assert.strictEqual(back.json.bio, 'ciao');
+      assert.strictEqual(back.json.title, 'Designer');
       userCookie = cookieHeader(back.res);
 
       const self = await api(base, '/api/admin/users/' + reg.json.id, { method: 'DELETE', cookie: adminCookie });
@@ -421,28 +453,156 @@ async function integration(connectionString) {
       const gone = await api(base, '/api/me', { cookie: userCookie });
       assert.strictEqual(gone.status, 401);
 
+      const badPrice = await api(base, '/api/admin/pricing', { method: 'PATCH', cookie: adminCookie, body: { mattina: -1 } });
+      assert.strictEqual(badPrice.status, 400);
+      assert.match(badPrice.json.error, /Prezzo non valido: mattina/);
+      const unchanged = await api(base, '/api/floorplan');
+      assert.strictEqual(unchanged.json.pricing.mattina, 12);
+
+      const patched = await api(base, '/api/admin/pricing', {
+        method: 'PATCH', cookie: adminCookie,
+        body: { mattina: 13, pomeriggio: 14, giornata: 21, mensile: 111 },
+      });
+      assert.strictEqual(patched.status, 200, JSON.stringify(patched.json));
+      assert.strictEqual(patched.json.mattina, 13);
+      assert.strictEqual(patched.json.pomeriggio, 14);
+      assert.strictEqual(patched.json.giornata, 21);
+      assert.strictEqual(patched.json.mensile, 111);
+      const floorNow = await api(base, '/api/floorplan');
+      assert.strictEqual(floorNow.json.pricing.giornata, 21);
+      assert.strictEqual(floorNow.json.pricing.mensile, 111);
+      assert.strictEqual(floorNow.json.image, '/media/floorplan.png');
+      assert.strictEqual(floorNow.json.desks.find((d) => d.id === 'B3').y, 33.6);
+      assert.strictEqual(fs.readFileSync(path.join(root, 'data', 'floorplan.json'), 'utf8'), floorFile);
+
+      const priced = await api(base, '/api/bookings', {
+        method: 'POST', cookie: adminCookie,
+        body: { deskId: 'B2', mode: 'giornaliero', date: '2026-12-03', slot: 'giornata', payment: 'bonifico' },
+      });
+      assert.strictEqual(priced.status, 200, JSON.stringify(priced.json));
+      assert.strictEqual(priced.json.amount, 21);
+
+      const junk = await api(base, '/api/me/avatar', { method: 'POST', cookie: adminCookie, body: { image: 'data:image/png;base64,aaaa' } });
+      assert.strictEqual(junk.status, 400);
+      assert.match(junk.json.error, /Immagine non valida/);
+      const big = Buffer.alloc(5e6 + 1, 7);
+      const over = await api(base, '/api/me/avatar', { method: 'POST', cookie: adminCookie, body: { image: 'data:image/png;base64,' + big.toString('base64') } });
+      assert.strictEqual(over.status, 400);
+      assert.match(over.json.error, /Max 5 MB/);
+
+      const srcPng = await noisePng(800, 600);
+      assert.ok(srcPng.length > 10 * 1024);
+      const listedBefore = fs.existsSync(avDir) ? fs.readdirSync(avDir).filter((f) => f !== '.gitkeep') : [];
+      const up = await api(base, '/api/me/avatar', { method: 'POST', cookie: adminCookie, body: { image: 'data:image/png;base64,' + srcPng.toString('base64') } });
+      assert.strictEqual(up.status, 200, JSON.stringify(up.json));
+      assert.match(up.json.avatar, /^\/api\/users\/\d+\/avatar\?v=/);
+      const listedAfter = fs.existsSync(avDir) ? fs.readdirSync(avDir).filter((f) => f !== '.gitkeep') : [];
+      assert.deepStrictEqual(listedAfter, listedBefore);
+      adaAvatar = await imageBytes(base + up.json.avatar);
+      assert.strictEqual(adaAvatar.status, 200);
+      assert.match(adaAvatar.type, /^image\/jpeg/);
+      assert.ok(adaAvatar.buf.length < 80 * 1024, 'compressed avatar was ' + adaAvatar.buf.length);
+      assert.ok(adaAvatar.buf.length < srcPng.length);
+      const adaMeta = await sharp(adaAvatar.buf).metadata();
+      assert.strictEqual(adaMeta.format, 'jpeg');
+      assert.strictEqual(adaMeta.width, 256);
+      assert.strictEqual(adaMeta.height, 256);
+
+      const legacyPng = await sharp({ create: { width: 32, height: 48, channels: 3, background: { r: 20, g: 140, b: 200 } } }).png().toBuffer();
+      fs.mkdirSync(avDir, { recursive: true });
+      fs.writeFileSync(path.join(avDir, 'legacy-smoke.png'), legacyPng);
+      const pg = new Client({ connectionString });
+      await pg.connect();
+      await pg.query(`UPDATE users SET avatar = $1 WHERE email = $2`, ['/uploads/avatars/legacy-smoke.png', 'import@example.invalid']);
+      await pg.query(`DELETE FROM avatars WHERE user_id = (SELECT id FROM users WHERE email = $1)`, ['import@example.invalid']);
+      await pg.query(
+        `INSERT INTO users (id, name, email, hash, role, active, bio, avatar, title)
+         VALUES (99, 'Ghost', 'ghost@example.invalid', $1, 'user', TRUE, '', '/uploads/avatars/does-not-exist.png', '')`,
+        [hash]
+      );
+      await pg.end();
+
       const out = await api(base, '/api/logout', { method: 'POST', cookie: adminCookie });
       assert.deepStrictEqual(out.json, { ok: 1 });
       const afterOut = await api(base, '/api/me', { cookie: adminCookie });
       assert.strictEqual(afterOut.status, 401);
 
       const n = await counts(connectionString);
-      assert.strictEqual(n.users, 2);
+      assert.strictEqual(n.users, 3);
     });
 
     const before = await counts(connectionString);
     await withServer(async (child) => {
       assert.match(child.log(), /import JSON saltato/);
+      assert.match(child.log(), /Prezzi pacchetti già presenti su Postgres/);
+      assert.doesNotMatch(child.log(), /Prezzi pacchetti importati/);
+      assert.match(child.log(), /Avatar importati dal disco in Postgres: 1/);
+      assert.match(child.log(), /Avatar locali assenti, campo svuotato: 1/);
+
+      const floor = await api(base, '/api/floorplan');
+      assert.strictEqual(floor.json.pricing.mattina, 13);
+      assert.strictEqual(floor.json.pricing.pomeriggio, 14);
+      assert.strictEqual(floor.json.pricing.giornata, 21);
+      assert.strictEqual(floor.json.pricing.mensile, 111);
+      assert.strictEqual(floor.json.desks.find((d) => d.id === 'A1').x, 37);
+      assert.strictEqual(fs.readFileSync(path.join(root, 'data', 'floorplan.json'), 'utf8'), floorFile);
+
       const login = await api(base, '/api/login', { method: 'POST', body: { email: 'ada@example.invalid', password: 'secret1' } });
       assert.strictEqual(login.status, 200);
       assert.strictEqual(login.json.role, 'admin');
+      assert.match(login.json.avatar, /^\/api\/users\/\d+\/avatar\?v=/);
+      const adminCookie2 = cookieHeader(login.res);
+      const listed = await api(base, '/api/admin/pricing', { cookie: adminCookie2 });
+      assert.strictEqual(listed.json.mensile, 111);
+      const again = await imageBytes(base + login.json.avatar);
+      assert.strictEqual(again.status, 200);
+      assert.deepStrictEqual(again.buf, adaAvatar.buf);
+
+      const imported = await api(base, '/api/login', { method: 'POST', body: { email: 'import@example.invalid', password: 'importpass' } });
+      assert.strictEqual(imported.status, 200);
+      assert.match(imported.json.avatar, /^\/api\/users\/\d+\/avatar\?v=/);
+      legacyAvatar = await imageBytes(base + imported.json.avatar);
+      assert.strictEqual(legacyAvatar.status, 200);
+      assert.match(legacyAvatar.type, /^image\/jpeg/);
+      const legacyMeta = await sharp(legacyAvatar.buf).metadata();
+      assert.strictEqual(legacyMeta.format, 'jpeg');
+      assert.ok(legacyMeta.width <= 256 && legacyMeta.height <= 256);
+      assert.ok(legacyAvatar.buf.length < 80 * 1024);
+      fs.unlinkSync(path.join(avDir, 'legacy-smoke.png'));
+      const still = await imageBytes(base + imported.json.avatar);
+      assert.deepStrictEqual(still.buf, legacyAvatar.buf);
+
+      const pg = new Client({ connectionString });
+      await pg.connect();
+      const ghost = await pg.query('SELECT avatar FROM users WHERE id = 99');
+      await pg.end();
+      assert.strictEqual(ghost.rows[0].avatar, '');
     });
     const after = await counts(connectionString);
     assert.strictEqual(after.users, before.users);
     assert.strictEqual(after.bookings, before.bookings);
     assert.strictEqual(after.payments, before.payments);
+
+    await withServer(async (child) => {
+      assert.match(child.log(), /Prezzi pacchetti già presenti su Postgres/);
+      assert.doesNotMatch(child.log(), /Prezzi pacchetti importati/);
+      assert.doesNotMatch(child.log(), /Avatar importati dal disco/);
+      assert.doesNotMatch(child.log(), /campo svuotato/);
+      const floor = await api(base, '/api/floorplan');
+      assert.strictEqual(floor.json.pricing.mensile, 111);
+      assert.strictEqual(floor.json.pricing.giornata, 21);
+      assert.strictEqual(floor.json.image, '/media/floorplan.png');
+      const login = await api(base, '/api/login', { method: 'POST', body: { email: 'ada@example.invalid', password: 'secret1' } });
+      const img = await imageBytes(base + login.json.avatar);
+      assert.deepStrictEqual(img.buf, adaAvatar.buf);
+      const imported = await api(base, '/api/login', { method: 'POST', body: { email: 'import@example.invalid', password: 'importpass' } });
+      const img2 = await imageBytes(base + imported.json.avatar);
+      assert.deepStrictEqual(img2.buf, legacyAvatar.buf);
+    });
     console.log('api flow ok');
   } finally {
+    const legacy = path.join(root, 'public', 'uploads', 'avatars', 'legacy-smoke.png');
+    if (fs.existsSync(legacy)) fs.unlinkSync(legacy);
     if (backup) fs.writeFileSync(dbFile, backup);
     else if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
   }
