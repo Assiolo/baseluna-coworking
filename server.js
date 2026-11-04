@@ -4,6 +4,7 @@ const bc = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const sharp = require('sharp');
 const db = require('./db');
 
 const D = path.join(__dirname, 'data');
@@ -85,8 +86,22 @@ app.post('/api/logout', async (q, s) => {
 
 app.get('/api/me', auth, (q, s) => s.json(pub(q.u)));
 
-const AV = path.join(__dirname, 'public/uploads/avatars');
-fs.mkdirSync(AV, { recursive: true });
+const AVATAR_SIDE = 256;
+const AVATAR_MAX_OUT = 80 * 1024;
+
+async function compressAvatar(input) {
+  const fitted = () => sharp(input, { failOn: 'error', animated: false, limitInputPixels: 40_000_000 })
+    .rotate()
+    .resize(AVATAR_SIDE, AVATAR_SIDE, { fit: 'cover', position: 'centre', withoutEnlargement: true })
+    .flatten({ background: '#ffffff' });
+  let quality = 65;
+  let bytes = await fitted().jpeg({ quality, mozjpeg: true }).toBuffer();
+  while (bytes.length > AVATAR_MAX_OUT && quality > 30) {
+    quality -= 10;
+    bytes = await fitted().jpeg({ quality, mozjpeg: true }).toBuffer();
+  }
+  return { bytes, contentType: 'image/jpeg' };
+}
 
 app.patch('/api/me/profile', auth, async (q, s) => {
   const b = q.body || {};
@@ -103,18 +118,37 @@ app.post('/api/me/avatar', auth, async (q, s) => {
   if (!m) return s.status(400).json({ error: 'Immagine non valida (PNG, JPG o WEBP)' });
   const buf = Buffer.from(m[2], 'base64');
   if (buf.length > 5e6) return s.status(400).json({ error: 'Max 5 MB' });
-  const f = `u${q.u.id}-${Date.now()}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
-  if (q.u.avatar) { try { fs.unlinkSync(path.join(__dirname, 'public', q.u.avatar)); } catch { /* file già assente */ } }
-  fs.writeFileSync(path.join(AV, f), buf);
-  const u = await db.updateUser(q.u.id, { avatar: '/uploads/avatars/' + f });
+  let packed;
+  try {
+    packed = await compressAvatar(buf);
+  } catch {
+    return s.status(400).json({ error: 'Immagine non valida (PNG, JPG o WEBP)' });
+  }
+  const u = await db.saveAvatar(q.u.id, packed.bytes, packed.contentType);
   s.json(pub(u));
+});
+
+app.get('/api/users/:id/avatar', async (q, s) => {
+  const id = Number(q.params.id);
+  if (!Number.isInteger(id)) return s.sendStatus(404);
+  const img = await db.getAvatar(id);
+  if (!img) return s.sendStatus(404);
+  const mime = /^image\/(jpeg|png|webp)$/.test(img.contentType) ? img.contentType : 'application/octet-stream';
+  s.set('Content-Type', mime);
+  s.set('Cache-Control', 'public, max-age=31536000, immutable');
+  s.set('X-Content-Type-Options', 'nosniff');
+  s.send(img.bytes);
 });
 
 app.get('/api/site', (q, s) => {
   const c = cfg();
   s.json({ heroImage: c.heroImage || '', heroVideo: c.heroVideo || '', paypalPaymentUrl: c.paypalPaymentUrl || '', satispayPaymentUrl: c.satispayPaymentUrl || '' });
 });
-app.get('/api/floorplan', (q, s) => s.json(fp()));
+app.get('/api/floorplan', async (q, s) => {
+  const plan = fp();
+  plan.pricing = await db.getPricing();
+  s.json(plan);
+});
 
 app.get('/api/today', async (q, s) => {
   const iso = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
@@ -147,6 +181,7 @@ const days = (m) => {
 app.post('/api/bookings', auth, async (q, s) => {
   const { deskId, mode, date, month, slot, payment } = q.body || {};
   const P = fp();
+  const pricing = await db.getPricing();
   if (!P.desks.find((d) => d.id === deskId)) return s.status(400).json({ error: 'Scrivania non valida' });
   if (!['bonifico', 'paypal', 'contanti', 'satispay'].includes(payment)) return s.status(400).json({ error: 'Scegli un metodo di pagamento' });
   let dates, sl, price;
@@ -154,12 +189,12 @@ app.post('/api/bookings', auth, async (q, s) => {
     if (!/^\d{4}-\d{2}$/.test(month || '')) return s.status(400).json({ error: 'Mese non valido' });
     dates = days(month);
     sl = 'giornata';
-    price = P.pricing.mensile;
+    price = pricing.mensile;
   } else {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '') || !P.pricing[slot]) return s.status(400).json({ error: 'Data o fascia non valida' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '') || !pricing[slot]) return s.status(400).json({ error: 'Data o fascia non valida' });
     dates = [date];
     sl = slot;
-    price = P.pricing[slot];
+    price = pricing[slot];
   }
   const bookMode = mode === 'mensile' ? 'mensile' : 'giornaliero';
   const online = ['satispay', 'paypal'].includes(payment);
@@ -211,25 +246,22 @@ app.get('/api/admin/payments', auth, admin, async (q, s) => {
   s.json(await db.listOpenPayments());
 });
 
-app.get('/api/admin/pricing', auth, admin, (q, s) => {
-  const P = fp();
-  s.json(P.pricing || {});
+app.get('/api/admin/pricing', auth, admin, async (q, s) => {
+  s.json(await db.getPricing());
 });
 
-app.patch('/api/admin/pricing', auth, admin, (q, s) => {
+app.patch('/api/admin/pricing', auth, admin, async (q, s) => {
   const b = q.body || {};
   const keys = ['mattina', 'pomeriggio', 'giornata', 'mensile'];
-  const P = fp();
-  P.pricing = P.pricing || {};
+  const patch = {};
   for (const k of keys) {
     if (k in b) {
       const n = Number(b[k]);
       if (!Number.isFinite(n) || n < 0) return s.status(400).json({ error: 'Prezzo non valido: ' + k });
-      P.pricing[k] = Math.round(n * 100) / 100;
+      patch[k] = Math.round(n * 100) / 100;
     }
   }
-  fs.writeFileSync(FP, JSON.stringify(P, null, 2));
-  s.json(P.pricing);
+  s.json(await db.updatePricing(patch));
 });
 
 app.get('/pay/:m', (q, s) => s.sendFile(path.join(__dirname, 'public/pay.html')));
@@ -358,11 +390,17 @@ process.on('SIGINT', shutdown);
 async function boot() {
   const url = process.env.DATABASE_URL;
   if (!url || !String(url).trim()) {
-    console.error('FATAL: DATABASE_URL non impostata. Il server non parte: utenti, sessioni, prenotazioni e pagamenti stanno su Postgres. Nessun ripiego su data/db.json, perché quel file verrebbe azzerato a ogni deploy su Render.');
+    console.error('FATAL: DATABASE_URL non impostata. Il server non parte: utenti, sessioni, prenotazioni, pagamenti, prezzi dei pacchetti e avatar stanno su Postgres. Nessun ripiego su file locali, perché il disco viene azzerato a ogni deploy su Render.');
     process.exit(1);
   }
   try {
-    await db.init({ connectionString: url.trim(), importPath: DB });
+    await db.init({
+      connectionString: url.trim(),
+      importPath: DB,
+      floorplanPath: FP,
+      publicRoot: path.join(__dirname, 'public'),
+      compressAvatar,
+    });
   } catch (err) {
     const message = String(err && err.message || err).replace(/postgres(?:ql)?:\/\/\S+/gi, 'postgres://***');
     console.error('FATAL: connessione o schema Postgres non riusciti:', message);

@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 
@@ -158,6 +159,209 @@ async function ensureSchema(client) {
     )
   `);
   await client.query('CREATE INDEX IF NOT EXISTS payments_user_idx ON payments (user_id)');
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS pricing (
+      name TEXT PRIMARY KEY,
+      amount DOUBLE PRECISION NOT NULL
+    )
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS avatars (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      bytes BYTEA NOT NULL,
+      content_type TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+const PRICING_DEFAULTS = {
+  mattina: 12,
+  pomeriggio: 12,
+  giornata: 20,
+  mensile: 290,
+};
+
+function roundMoney(n) {
+  return Math.round(Number(n) * 100) / 100;
+}
+
+function pricingSeedFromFile(floorplanPath) {
+  const values = { ...PRICING_DEFAULTS };
+  if (!floorplanPath || !fs.existsSync(floorplanPath)) return values;
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(floorplanPath, 'utf8'));
+  } catch (err) {
+    console.error('floorplan.json non letto per i prezzi iniziali:', err.message);
+    return values;
+  }
+  const pricing = data && data.pricing;
+  if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) return values;
+  for (const [name, raw] of Object.entries(pricing)) {
+    if (!name) continue;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) continue;
+    values[name] = roundMoney(n);
+  }
+  return values;
+}
+
+async function seedPricingIfEmpty(floorplanPath) {
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(8675311)');
+    const count = await client.query('SELECT COUNT(*)::int AS n FROM pricing');
+    if (count.rows[0].n > 0) {
+      await client.query('COMMIT');
+      return { seeded: false };
+    }
+    const values = pricingSeedFromFile(floorplanPath);
+    for (const [name, amount] of Object.entries(values)) {
+      await client.query('INSERT INTO pricing (name, amount) VALUES ($1, $2)', [name, amount]);
+    }
+    await client.query('COMMIT');
+    return { seeded: true, count: Object.keys(values).length };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function getPricing() {
+  const { rows } = await getPool().query('SELECT name, amount FROM pricing ORDER BY name');
+  const out = {};
+  for (const r of rows) out[r.name] = num(r.amount);
+  return out;
+}
+
+async function updatePricing(patch) {
+  const entries = Object.entries(patch);
+  if (!entries.length) return getPricing();
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    for (const [name, amount] of entries) {
+      const upd = await client.query('UPDATE pricing SET amount = $2 WHERE name = $1', [name, amount]);
+      if (!upd.rowCount) {
+        await client.query('INSERT INTO pricing (name, amount) VALUES ($1, $2)', [name, amount]);
+      }
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+  return getPricing();
+}
+
+function avatarUrl(userId) {
+  return `/api/users/${userId}/avatar?v=${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
+}
+
+async function saveAvatar(userId, bytes, contentType) {
+  const url = avatarUrl(userId);
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO avatars (user_id, bytes, content_type, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+         SET bytes = EXCLUDED.bytes, content_type = EXCLUDED.content_type, updated_at = NOW()`,
+      [userId, bytes, contentType]
+    );
+    const upd = await client.query('UPDATE users SET avatar = $2 WHERE id = $1 RETURNING *', [userId, url]);
+    await client.query('COMMIT');
+    return mapUser(upd.rows[0]);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function getAvatar(userId) {
+  if (!Number.isInteger(userId)) return null;
+  const { rows } = await getPool().query('SELECT bytes, content_type FROM avatars WHERE user_id = $1', [userId]);
+  if (!rows[0] || rows[0].bytes == null) return null;
+  return { bytes: rows[0].bytes, contentType: rows[0].content_type || 'application/octet-stream' };
+}
+
+function localAvatarPath(publicRoot, stored) {
+  if (typeof stored !== 'string' || !stored.startsWith('/uploads/avatars/')) return null;
+  if (stored.includes('..') || stored.includes('\\') || stored.includes('\0')) return null;
+  const root = path.resolve(publicRoot);
+  const resolved = path.resolve(root, stored.replace(/^\/+/, ''));
+  if (!resolved.startsWith(root + path.sep)) return null;
+  return resolved;
+}
+
+async function importLocalAvatars(publicRoot, compress) {
+  if (!publicRoot || typeof compress !== 'function') return { imported: 0, cleared: 0 };
+  const client = await getPool().connect();
+  let rows;
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(8675312)');
+    const found = await client.query(
+      `SELECT u.id, u.avatar
+       FROM users u
+       WHERE u.avatar LIKE '/uploads/avatars/%'
+         AND NOT EXISTS (SELECT 1 FROM avatars a WHERE a.user_id = u.id)
+       FOR UPDATE OF u`
+    );
+    rows = found.rows;
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  let imported = 0;
+  let cleared = 0;
+  for (const r of rows) {
+    const file = localAvatarPath(publicRoot, r.avatar);
+    if (!file || !fs.existsSync(file)) {
+      await getPool().query(
+        `UPDATE users SET avatar = ''
+         WHERE id = $1 AND avatar = $2
+           AND NOT EXISTS (SELECT 1 FROM avatars a WHERE a.user_id = $1)`,
+        [r.id, r.avatar]
+      );
+      cleared++;
+      continue;
+    }
+    let buf;
+    try {
+      const st = fs.statSync(file);
+      if (!st.isFile() || st.size > 5e6) {
+        console.error('Avatar locale troppo grande o non è un file, utente ' + r.id);
+        continue;
+      }
+      buf = fs.readFileSync(file);
+    } catch (err) {
+      console.error('Avatar locale non letto per utente ' + r.id + ': ' + err.message);
+      continue;
+    }
+    try {
+      const packed = await compress(buf);
+      if (!packed || !packed.bytes || !packed.contentType) continue;
+      await saveAvatar(r.id, packed.bytes, packed.contentType);
+      imported++;
+    } catch (err) {
+      console.error('Avatar locale non importato per utente ' + r.id + ': ' + err.message);
+    }
+  }
+  return { imported, cleared };
 }
 
 async function importJsonIfEmpty(importPath) {
@@ -279,7 +483,7 @@ async function importJsonIfEmpty(importPath) {
   }
 }
 
-async function init({ connectionString, importPath }) {
+async function init({ connectionString, importPath, floorplanPath, publicRoot, compressAvatar }) {
   if (pool) return;
   const neonDirect = /neon\.tech/i.test(connectionString) && !usingPooledEndpoint(connectionString);
   if (neonDirect) {
@@ -307,6 +511,15 @@ async function init({ connectionString, importPath }) {
     } else {
       console.log('Postgres pronto (nessun data/db.json da importare)');
     }
+    const pricing = await seedPricingIfEmpty(floorplanPath);
+    if (pricing.seeded) {
+      console.log(`Prezzi pacchetti importati da data/floorplan.json (${pricing.count} voci)`);
+    } else {
+      console.log('Prezzi pacchetti già presenti su Postgres');
+    }
+    const avatars = await importLocalAvatars(publicRoot, compressAvatar);
+    if (avatars.imported) console.log(`Avatar importati dal disco in Postgres: ${avatars.imported}`);
+    if (avatars.cleared) console.log(`Avatar locali assenti, campo svuotato: ${avatars.cleared}`);
     return result;
   } catch (err) {
     await pool.end().catch(() => {});
@@ -676,4 +889,8 @@ module.exports = {
   listBookingsAdmin,
   cancelDay,
   cancelMonth,
+  getPricing,
+  updatePricing,
+  saveAvatar,
+  getAvatar,
 };

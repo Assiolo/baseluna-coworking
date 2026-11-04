@@ -1,5 +1,5 @@
 {
-  "_note": "Esempio di forma, senza hash reali. Non rinominarlo in db.json se vuoi partire da zero: al primo avvio, se le tabelle sono vuote e data/db.json esiste, viene importato una sola volta. Senza quel file il primo account registrato diventa admin. floorplan.json e config.json restano file, non stanno nel database.",
+  "_note": "Esempio di forma, senza hash reali. Non rinominarlo in db.json se vuoi partire da zero: al primo avvio, se le tabelle sono vuote e data/db.json esiste, viene importato una sola volta. Senza quel file il primo account registrato diventa admin. La geometria di floorplan.json e config.json restano file. I prezzi dei pacchetti si copiano su Postgres solo se la tabella pricing è vuota.",
   "users": [
     {
       "id": 1,
