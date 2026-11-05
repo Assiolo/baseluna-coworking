@@ -1,3 +1,4 @@
+// v20261105a: guida primo accesso (tour.js)
 // v20261103m: bg + colori desk + no reload pick
 // v20261103l: fix bg sotto .bg opaco
 // v20261103k: dashboard-bg.jpg utente
@@ -52,11 +53,13 @@ function startLiveClock(root=document){
   tick();
   _clockTimer=setInterval(tick,1000);
 }
-let LANDED=false;
-function render(){document.body.classList.toggle('app-bg',!!ME);if(!ME)return LANDED?authView('login'):landing();A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><b id="goHome" style="cursor:pointer">Base <span>Luna</span> Coworking</b>${avatar()}${[['home','Home'],['prenota','Prenota'],['mie','Le mie prenotazioni'],['profilo','Il mio profilo'],...(ME.role==='admin'?[['admin','Admin']]:[])].map(([k,l])=>`<a class="${view===k?'on':''}" data-v="${k}">${l}</a>`).join('')}<a id="out">Esci</a></nav><main id="m"></main>`;
+let LANDED=false,paintGen=0;
+function render(){const gen=++paintGen;document.body.classList.toggle('app-bg',!!ME);if(!ME){if(window.BaseTour)BaseTour.onLoggedOut();return LANDED?authView('login'):landing()}if(window.BaseTour&&!BaseTour.active&&!BaseTour.seen())BaseTour.arm=true;A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><div class="nav-brand"><b id="goHome" style="cursor:pointer">Base <span>Luna</span> Coworking</b><a id="openGuida" class="nav-guida">Guida</a></div>${avatar()}${[['home','Home',''],['prenota','Prenota','nav-prenota'],['mie','Le mie prenotazioni',''],['profilo','Il mio profilo','profile'],...(ME.role==='admin'?[['admin','Admin','']]: [])].map(([k,l,t])=>`<a class="${view===k?'on':''}" data-v="${k}"${t?` data-tour="${t}"`:''}>${l}</a>`).join('')}<a id="out">Esci</a></nav><main id="m"></main>`;
  A.querySelectorAll('[data-v]').forEach(a=>a.onclick=()=>{view=a.dataset.v;render()});$('#out').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}ME=null;LANDED=false;view='home';document.body.classList.remove('app-bg');render()};
  $('#goHome').onclick=()=>{view='home';render()};
- ({home:homeView,prenota:bookView,mie:mineView,admin:adminView,profilo:profileView})[view]()}
+ const guida=$('#openGuida');if(guida)guida.onclick=e=>{e.preventDefault();if(window.BaseTour)BaseTour.open()};
+ const job=({home:homeView,prenota:bookView,mie:mineView,admin:adminView,profilo:profileView})[view]();
+ Promise.resolve(job).then(()=>{if(gen===paintGen&&window.BaseTour)BaseTour.afterPaint()},()=>{if(gen===paintGen&&window.BaseTour)BaseTour.afterPaint()})}
 function landing(){document.body.classList.remove('app-bg');const P=PLAN.pricing;const vid=SITE.heroVideo?`<video class="bgvid" autoplay muted loop playsinline poster="${SITE.heroImage||''}"><source src="${SITE.heroVideo}" type="video/mp4"></video><div class="bgvid-shade"></div>`:'';A.innerHTML=`<div class="land has-bgvid">
 ${vid}<div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="ring"></div><div class="pill3d"></div>
 <nav class="glass rise"><b class="brand"><i class="dot"></i>Base <span>Luna</span></b><a href="#spazi" class="hide-s">Spazi</a><a href="#prezzi" class="hide-s">Prezzi</a><a data-a="login">Accedi</a><a class="btn sm" data-a="reg">Registrati</a></nav>
@@ -105,6 +108,7 @@ function state(id){const o=S.occ.filter(b=>b.deskId===id&&(S.mode==='mensile'||c
 async function loadOcc(){const[f,t]=range();S.occ=await api(`/api/availability?from=${f}&to=${t}`)}
 
 async function homeView(){
+  const gen=paintGen;
   try{TODAY=await api('/api/today')}catch{TODAY={date:today(),bookings:[]}}
   let mineAll=[]; try{mineAll=await api('/api/bookings/mine')}catch{mineAll=[]}
   const list=TODAY.bookings||[];
@@ -136,9 +140,10 @@ async function homeView(){
   const deskBox=myDesk
     ? `<div class="home-desk-big"><span>Qual è la tua scrivania</span><strong>${esc(myDesk)}</strong><p>Oggi · ${esc(SLOT[mine[0].slot]||mine[0].slot)}</p></div>`
     : `<div class="home-desk-big"><span>Qual è la tua scrivania</span><strong>—</strong><p>Nessuna postazione per oggi</p></div>`;
+  if(gen!==paintGen||view!=='home')return;
   $('#m').innerHTML=`<div class="phome">
 <header class="hero2 phome-hero">
-  <div class="htxt">
+  <div class="htxt" data-tour="hero">
     <p class="kick rise" style="--d:.1s"><i></i>Il tuo spazio · Base Luna</p>
     <h1 class="mega rise" style="--d:.2s">Crea<br><em>sulla</em> <span class="grad">Luna.</span></h1>
     <p class="lead rise" style="--d:.35s">Ciao ${esc(first)}. Ecco chi c’è in studio oggi e la tua postazione.</p>
@@ -147,7 +152,7 @@ async function homeView(){
       <button class="btn ghost lg" id="phProf">Il mio profilo</button>
     </div>
   </div>
-  <div class="hcard-wrap rise" style="--d:.4s">
+  <div class="hcard-wrap rise" style="--d:.4s" data-tour="today">
     <div class="glass hcard hcard-photo" id="tilt">
       <img class="hcard-bg" src="/media/hcard-bg.jpg?v=4" alt="">
       <div class="hc-live">
@@ -165,17 +170,17 @@ async function homeView(){
   </div>
 </header>
 <section class="home-panels rise" style="--d:.55s">
-  <div class="glass card home-panel">
+  <div class="glass card home-panel" data-tour="bookings">
     <h2>Le mie prenotazioni</h2>
     <p class="sub">Prossime date prenotate</p>
     ${mineList}
     <button class="btn ghost sm" id="phAllMine">Vedi tutte</button>
   </div>
-  <div class="glass card home-panel">
+  <div class="glass card home-panel" data-tour="desk">
     <h2>Qual è la tua scrivania</h2>
     ${deskBox}
   </div>
-  <div class="glass card home-panel">
+  <div class="glass card home-panel" data-tour="month">
     <h2>Riepilogo ${esc(ym)}</h2>
     <div class="home-stats">
       <div><b>${made}</b><span>prenotazioni del mese</span></div>
@@ -196,13 +201,13 @@ async function homeView(){
   }
   startLiveClock(A);
 }
-async function bookView(){await loadOcc();try{const site=await api('/api/site');window.__payLinks={paypal:site.paypalPaymentUrl||'https://www.paypal.biz/baselunastudio',satispay:site.satispayPaymentUrl||''}}catch{window.__payLinks={paypal:'https://www.paypal.biz/baselunastudio',satispay:''}};const P=PLAN.pricing,price=S.mode==='mensile'?P.mensile:P[S.slot];
+async function bookView(){const gen=paintGen;await loadOcc();try{const site=await api('/api/site');window.__payLinks={paypal:site.paypalPaymentUrl||'https://www.paypal.biz/baselunastudio',satispay:site.satispayPaymentUrl||''}}catch{window.__payLinks={paypal:'https://www.paypal.biz/baselunastudio',satispay:''}};if(gen!==paintGen||view!=='prenota')return;const P=PLAN.pricing,price=S.mode==='mensile'?P.mensile:P[S.slot];
  $('#m').innerHTML=`${welcome()}<h1>Prenota la tua postazione</h1><p class="sub">Scegli quando, dove e come pagare.</p>
- <div class="glass card"><h2>1 · Quando</h2><div class="prod" id="mode"><button data-k="giornaliero" class="${S.mode==='giornaliero'?'on':''}"><small>Giorno / giornata</small><b>Ingresso giornaliero</b><span>Mattina, pomeriggio o giornata intera</span><em>da €${P.mattina}</em></button><button data-k="mensile" class="${S.mode==='mensile'?'on':''}"><small>Consigliato</small><b>Pacchetto mensile</b><span>Tutti i giorni feriali del mese, giornata intera, stessa scrivania</span><em>€${P.mensile}/mese</em></button></div>
+ <div class="glass card" data-tour="when"><h2>1 · Quando</h2><div class="prod" id="mode"><button data-k="giornaliero" class="${S.mode==='giornaliero'?'on':''}"><small>Giorno / giornata</small><b>Ingresso giornaliero</b><span>Mattina, pomeriggio o giornata intera</span><em>da €${P.mattina}</em></button><button data-k="mensile" class="${S.mode==='mensile'?'on':''}"><small>Consigliato</small><b>Pacchetto mensile</b><span>Tutti i giorni feriali del mese, giornata intera, stessa scrivania</span><em>€${P.mensile}/mese</em></button></div>
  <div class="row">${S.mode==='mensile'?`<div><label>Mese (tutti i giorni feriali, giornata intera)</label><input type="month" id="mo" value="${S.month}" min="${today().slice(0,7)}"></div>`:`<div><label>Data</label><input type="date" id="dt" value="${S.date}" min="${today()}"></div><div><label>Fascia oraria</label><select id="sl">${Object.entries(SLOT).map(([k,l])=>`<option value="${k}" ${S.slot===k?'selected':''}>${l} · €${P[k]}</option>`).join('')}</select></div>`}</div>${S.mode==='mensile'?calendar():''}</div>
- <div class="glass card"><h2>2 · Scrivanie</h2><div class="seg" id="show"><button data-k="piantina" class="${S.show==='piantina'?'on':''}">Piantina</button><button data-k="elenco" class="${S.show==='elenco'?'on':''}">Disposizione giornaliera</button></div>
+ <div class="glass card" data-tour="island"><h2>2 · Scrivanie</h2><div class="seg" id="show"><button data-k="piantina" class="${S.show==='piantina'?'on':''}">Piantina</button><button data-k="elenco" class="${S.show==='elenco'?'on':''}">Disposizione giornaliera</button></div>
  <div class="legend"><span><i style="background:#22c55e"></i>Libera</span><span><i style="background:#9ca3af"></i>Occupata</span><span><i style="background:#FF5B00"></i>Selezionata</span></div><div id="dk"></div></div>
- <div class="glass card"><h2>3 · Metodo di pagamento</h2><div class="pay">${Object.entries(PAY).map(([k,l])=>`<button data-k="${k}" class="${S.pay===k?'on':''}">${l}</button>`).join('')}</div></div>
+ <div class="glass card" data-tour="pay"><h2>3 · Metodo di pagamento</h2><div class="pay">${Object.entries(PAY).map(([k,l])=>`<button data-k="${k}" class="${S.pay===k?'on':''}">${l}</button>`).join('')}</div></div>
  <div class="glass card sum"><div><div class="sub" style="margin:0">${S.desk?'Scrivania '+S.desk:'Nessuna scrivania'} · ${S.mode==='mensile'?'Mese '+S.month:S.date+' · '+SLOT[S.slot]}${S.pay?' · '+PAY[S.pay]:''}</div><div class="price">€${price}</div><div class="err" id="e"></div></div><button class="btn" id="go" ${S.desk&&S.pay?'':'disabled'}>${S.pay==='satispay'||S.pay==='paypal'?'Prenota e paga':'Prenota'}</button></div>`;
  const dk=$('#dk');
  const syncSum=()=>{const P=PLAN.pricing,price=S.mode==='mensile'?P.mensile:P[S.slot];const sub=$('.sum .sub'),pr=$('.sum .price'),go=$('#go');if(sub)sub.textContent=(S.desk?'Scrivania '+S.desk:'Nessuna scrivania')+' · '+(S.mode==='mensile'?'Mese '+S.month:S.date+' · '+SLOT[S.slot])+(S.pay?' · '+PAY[S.pay]:'');if(pr)pr.textContent='€'+price;if(go){go.disabled=!(S.desk&&S.pay);go.textContent=(S.pay==='satispay'||S.pay==='paypal')?'Prenota e paga':'Prenota'}};
@@ -268,4 +273,5 @@ document.addEventListener('click',e=>{if(e.target.id==='goprof'){view='profilo';
 function profileView(){$('#m').innerHTML=`<h1>Il mio profilo</h1><p class="sub">Così ti riconoscono in studio.</p><div class="row"><div class="glass card prof-l"><div class="w-av big">${avatar('xl')}<i class="ring2"></i></div><label class="btn ghost sm up">Carica foto<input type="file" id="ph" accept="image/png,image/jpeg,image/webp" hidden></label><p class="sub" style="margin:10px 0 0;font-size:12px">PNG, JPG o WEBP · ridimensionata a 512px</p></div><div class="glass card"><label>Nome visualizzato</label><input id="pn" value="${esc(ME.name)}"><label>Ruolo / cosa fai</label><input id="pt" maxlength="60" placeholder="es. Designer, illustratrice, sviluppatore" value="${esc(ME.title)}"><label>Qualcosa su di te</label><textarea id="pb" maxlength="400" rows="5" placeholder="Su cosa lavori, cosa ti ispira…">${esc(ME.bio)}</textarea><button class="btn" id="ps">Salva profilo</button> <span id="pmsg" class="sub"></span></div></div>`;
  $('#ph').onchange=async e=>{const f=e.target.files[0];if(!f)return;const img=new Image();img.src=URL.createObjectURL(f);await img.decode();const c=document.createElement('canvas'),k=Math.min(1,512/Math.max(img.width,img.height));c.width=img.width*k;c.height=img.height*k;c.getContext('2d').drawImage(img,0,0,c.width,c.height);try{ME=await api('/api/me/avatar',{method:'POST',body:{image:c.toDataURL('image/jpeg',.88)}});profileView()}catch(x){$('#pmsg').textContent=x.message}};
  $('#ps').onclick=async()=>{try{ME=await api('/api/me/profile',{method:'PATCH',body:{name:$('#pn').value,title:$('#pt').value,bio:$('#pb').value}});$('#pmsg').textContent='Salvato ✓';render()}catch(x){$('#pmsg').textContent=x.message}}}
+if(window.BaseTour)BaseTour.bind({getView:()=>view,setView:v=>{view=v;render()},userId:()=>ME&&ME.id});
 boot();
