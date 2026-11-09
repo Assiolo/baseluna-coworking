@@ -173,6 +173,7 @@ async function ensureSchema(client) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await require('./print-store').ensureSchema(client);
 }
 
 const PRICING_DEFAULTS = {
@@ -866,6 +867,7 @@ module.exports = {
   init,
   ping,
   close,
+  getPool,
   connectionOptions,
   userBySession,
   userByEmail,

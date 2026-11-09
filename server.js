@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const sharp = require('sharp');
 const db = require('./db');
+const printRoutes = require('./print-routes');
 
 const D = path.join(__dirname, 'data');
 const DB = path.join(D, 'db.json');
@@ -28,6 +29,7 @@ const linkFor = (m, amt) => {
 
 const app = express();
 app.set('trust proxy', 1);
+printRoutes.mountWebhook(app);
 app.use(express.json({ limit: '8mb' }), cp(), express.static(path.join(__dirname, 'public')));
 
 const pub = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, bio: u.bio || '', avatar: u.avatar || '', title: u.title || '' });
@@ -360,11 +362,19 @@ app.post('/api/hots', (q, s) => {
   s.json({ ok: 1, version: 'v' + ver, hots: h });
 });
 
+printRoutes.mount(app);
+
 app.get(/^\/(?!api).*/, (q, s) => s.sendFile(path.join(__dirname, 'public/index.html')));
 
 app.use((err, q, s, next) => {
   console.error(err);
   if (s.headersSent) return next(err);
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    return s.status(413).json({ error: 'File troppo grande (max 25 MB)' });
+  }
+  if (err.expose && err.status && err.status < 500) {
+    return s.status(err.status).json({ error: err.message });
+  }
   s.status(500).json({ error: 'Errore del server' });
 });
 
@@ -407,6 +417,7 @@ async function boot() {
     process.exit(1);
   }
   startKeepAlive();
+  printRoutes.logConfig();
   const PORT = process.env.PORT || 5173;
   server = app.listen(PORT, '0.0.0.0', () => console.log('Base Luna Coworking su http://localhost:' + PORT));
 }

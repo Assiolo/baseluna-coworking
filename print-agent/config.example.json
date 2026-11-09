@@ -1,0 +1,9 @@
+{
+  "siteUrl": "https://TUO-SERVIZIO.onrender.com",
+  "token": "lo-stesso-valore-di-PRINT_AGENT_TOKEN",
+  "agentId": "studio-1",
+  "pollMs": 5000,
+  "backend": "file",
+  "outputDir": "./print-out",
+  "snmpCommunity": "public"
+}
