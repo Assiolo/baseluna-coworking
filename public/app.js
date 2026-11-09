@@ -14,7 +14,16 @@ const PAY={bonifico:'Bonifico',paypal:'PayPal',contanti:'Contanti',satispay:'Sat
 const today=()=>new Date().toISOString().slice(0,10);
 let ME=null,PLAN=null,view='home';
 const S={mode:'giornaliero',date:today(),month:today().slice(0,7),slot:'giornata',desk:null,pay:null,show:'piantina',occ:[]};
-let SITE={},TODAY={date:today(),bookings:[]};async function boot(){PLAN=await api('/api/floorplan');try{TODAY=await api('/api/today')}catch{TODAY={date:today(),bookings:[]}}try{SITE=await api('/api/site');if(SITE.heroImage)document.documentElement.style.setProperty('--hero',`url('${SITE.heroImage}')`)}catch{SITE={}}try{ME=await api('/api/me')}catch{ME=null}render()}
+let SITE={},TODAY={date:today(),bookings:[]};async function boot(){PLAN=await api('/api/floorplan');try{TODAY=await api('/api/today')}catch{TODAY={date:today(),bookings:[]}}try{SITE=await api('/api/site');if(SITE.heroImage)document.documentElement.style.setProperty('--hero',`url('${SITE.heroImage}')`)}catch{SITE={}}try{ME=await api('/api/me')}catch{ME=null}
+if(ME&&/[?&]stampa=/.test(location.search)){
+  view='stampa';
+  try{
+    if(/[?&]stampa=ok(?:&|$)/.test(location.search))sessionStorage.setItem('print-flash','Pagamento ricevuto. Il credito compare appena Stripe conferma.');
+    else if(/[?&]stampa=annullata(?:&|$)/.test(location.search))sessionStorage.setItem('print-flash','Ricarica annullata. Nessun addebito.');
+  }catch(e){}
+  history.replaceState(null,'',location.pathname);
+}
+render()}
 
 const pad2=n=>String(n).padStart(2,'0');
 function romeClock(){
@@ -54,11 +63,11 @@ function startLiveClock(root=document){
   _clockTimer=setInterval(tick,1000);
 }
 let LANDED=false,paintGen=0;
-function render(){const gen=++paintGen;document.body.classList.toggle('app-bg',!!ME);if(!ME){if(window.BaseTour)BaseTour.onLoggedOut();return LANDED?authView('login'):landing()}if(window.BaseTour&&!BaseTour.active&&!BaseTour.seen())BaseTour.arm=true;A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><div class="nav-brand"><b id="goHome" style="cursor:pointer">Base <span>Luna</span> Coworking</b><a id="openGuida" class="nav-guida">Guida</a></div>${avatar()}${[['home','Home',''],['prenota','Prenota','nav-prenota'],['mie','Le mie prenotazioni',''],['profilo','Il mio profilo','profile'],...(ME.role==='admin'?[['admin','Admin','']]: [])].map(([k,l,t])=>`<a class="${view===k?'on':''}" data-v="${k}"${t?` data-tour="${t}"`:''}>${l}</a>`).join('')}<a id="out">Esci</a></nav><main id="m"></main>`;
+function render(){const gen=++paintGen;document.body.classList.toggle('app-bg',!!ME);if(!ME){if(window.BaseTour)BaseTour.onLoggedOut();return LANDED?authView('login'):landing()}if(window.BaseTour&&!BaseTour.active&&!BaseTour.seen())BaseTour.arm=true;A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><div class="nav-brand"><b id="goHome" style="cursor:pointer">Base <span>Luna</span> Coworking</b><a id="openGuida" class="nav-guida">Guida</a></div>${avatar()}${[['home','Home',''],['prenota','Prenota','nav-prenota'],['mie','Le mie prenotazioni',''],['stampa','Stampa',''],['profilo','Il mio profilo','profile'],...(ME.role==='admin'?[['admin','Admin','']]: [])].map(([k,l,t])=>`<a class="${view===k?'on':''}" data-v="${k}"${t?` data-tour="${t}"`:''}>${l}</a>`).join('')}<a id="out">Esci</a></nav><main id="m"></main>`;
  A.querySelectorAll('[data-v]').forEach(a=>a.onclick=()=>{view=a.dataset.v;render()});$('#out').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}ME=null;LANDED=false;view='home';document.body.classList.remove('app-bg');render()};
  $('#goHome').onclick=()=>{view='home';render()};
  const guida=$('#openGuida');if(guida)guida.onclick=e=>{e.preventDefault();if(window.BaseTour)BaseTour.open()};
- const job=({home:homeView,prenota:bookView,mie:mineView,admin:adminView,profilo:profileView})[view]();
+ const job=({home:homeView,prenota:bookView,mie:mineView,admin:adminView,profilo:profileView,stampa:()=>window.PrintUI.member(),gestione:()=>window.PrintUI.admin()})[view]();
  Promise.resolve(job).then(()=>{if(gen===paintGen&&window.BaseTour)BaseTour.afterPaint()},()=>{if(gen===paintGen&&window.BaseTour)BaseTour.afterPaint()})}
 function landing(){document.body.classList.remove('app-bg');const P=PLAN.pricing;const vid=SITE.heroVideo?`<video class="bgvid" autoplay muted loop playsinline poster="${SITE.heroImage||''}"><source src="${SITE.heroVideo}" type="video/mp4"></video><div class="bgvid-shade"></div>`:'';A.innerHTML=`<div class="land has-bgvid">
 ${vid}<div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="ring"></div><div class="pill3d"></div>
@@ -243,6 +252,7 @@ async function adminView(){const[u,b,pp,pr]=await Promise.all([api('/api/admin/u
   return `<div class="adm-month glass card"><div class="adm-month-h"><h3>${esc(mo)}</h3><span class="sub">${rows.length} prenotaz.</span><button class="btn sm ghost danger" data-cancel-month="${esc(mo)}">Annulla tutto il mese</button></div>${dayBlocks||'<p class="sub">Nessuna</p>'}</div>`;
  }).join('')||'<div class="glass card"><p class="sub">Nessuna prenotazione attiva</p></div>';
  $('#m').innerHTML=`<h1>Admin</h1><p class="sub">${u.length} account · ${active.filter(x=>x.status==='confermata').length} confermate · ${active.length} attive</p>
+ <div style="margin:-6px 0 18px"><button class="btn" id="go-print-admin">Gestione stampe</button></div>
  <div class="glass card"><h2>Pacchetti</h2><p class="sub">Prezzi salvati nel database. Landing e Prenota li leggono da qui.</p>
  <div class="row" style="gap:12px;flex-wrap:wrap">
   <div><label>Mattina 9–13 (€)</label><input type="number" min="0" step="0.01" id="pr-mattina" value="${pr.mattina??''}"></div>
@@ -256,6 +266,7 @@ async function adminView(){const[u,b,pp,pr]=await Promise.all([api('/api/admin/u
  <h2 style="margin-top:28px">Prenotazioni per mese / giorno</h2>
  ${monthHtml}`;
  const m=$('#m');
+ const goPrint=$('#go-print-admin');if(goPrint)goPrint.onclick=()=>{view='gestione';render()};
  m.querySelectorAll('[data-p]').forEach(e=>e.onclick=async()=>{await api('/api/admin/pay/'+e.dataset.p+'/paid',{method:'POST'});adminView()});
  m.querySelectorAll('[data-u]').forEach(e=>e.onclick=async()=>{await api('/api/admin/users/'+e.dataset.u,{method:'PATCH',body:{active:e.dataset.a==='1'}});adminView()});
  m.querySelectorAll('[data-r]').forEach(e=>e.onclick=async()=>{await api('/api/admin/users/'+e.dataset.r,{method:'PATCH',body:{role:e.dataset.role}});adminView()});
@@ -274,4 +285,5 @@ function profileView(){$('#m').innerHTML=`<h1>Il mio profilo</h1><p class="sub">
  $('#ph').onchange=async e=>{const f=e.target.files[0];if(!f)return;const img=new Image();img.src=URL.createObjectURL(f);await img.decode();const c=document.createElement('canvas'),k=Math.min(1,512/Math.max(img.width,img.height));c.width=img.width*k;c.height=img.height*k;c.getContext('2d').drawImage(img,0,0,c.width,c.height);try{ME=await api('/api/me/avatar',{method:'POST',body:{image:c.toDataURL('image/jpeg',.88)}});profileView()}catch(x){$('#pmsg').textContent=x.message}};
  $('#ps').onclick=async()=>{try{ME=await api('/api/me/profile',{method:'PATCH',body:{name:$('#pn').value,title:$('#pt').value,bio:$('#pb').value}});$('#pmsg').textContent='Salvato ✓';render()}catch(x){$('#pmsg').textContent=x.message}}}
 if(window.BaseTour)BaseTour.bind({getView:()=>view,setView:v=>{view=v;render()},userId:()=>ME&&ME.id});
+window.BaseApp={go(v){view=v;render()}};
 boot();

@@ -981,3 +981,38 @@ nav a.nav-guida:hover{color:#fff;background:rgba(255,255,255,.08)}
 .tour-card.is-left > .tour-arrow{right:-13px;top:var(--ay,24px);border-left-color:var(--o)}
 .tour-card .btn:focus-visible,.tour-skip:focus-visible{outline:2px solid var(--o);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.tour-card{animation:none}}
+
+/* === stampa: credito e coda === */
+.print-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}
+.print-euro{display:block;font-size:42px;letter-spacing:-.05em;line-height:1;margin:8px 0}
+.print-drop{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;min-height:140px;border:1px dashed rgba(255,255,255,.35);border-radius:20px;padding:22px;text-align:center;background:rgba(0,0,0,.22);cursor:pointer;margin-bottom:16px}
+.print-drop.over{border-color:#FF5B00;background:rgba(255,91,0,.12)}
+.print-drop b{font-size:16px}
+.print-drop span,.print-help{color:var(--g);font-size:13px}
+.print-preview{display:grid;grid-template-columns:180px 1fr;gap:14px;align-items:center;margin-bottom:12px}
+.print-preview[hidden]{display:none !important}
+.print-preview iframe{width:100%;height:220px;border:0;border-radius:16px;background:#fff}
+.print-form{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.print-form .full{grid-column:1/-1}
+.print-check{display:flex;align-items:center;gap:8px;margin:8px 0;color:#eee;font-size:14px}
+.print-check input{width:auto!important;margin:0!important;accent-color:#FF5B00}
+.print-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.print-stat{padding:18px 20px!important}
+.print-stat small{color:var(--g);font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+.print-stat b{display:block;font-size:28px;letter-spacing:-.04em;margin-top:6px}
+.print-chart{display:flex;align-items:flex-end;gap:3px;height:120px;margin-top:8px}
+.print-chart i{flex:1;display:block;background:linear-gradient(180deg,#ffb38a,#FF5B00);border-radius:6px 6px 2px 2px;min-height:3px;opacity:.9}
+.print-chart-labels{display:flex;justify-content:space-between;color:var(--g);font-size:12px;margin-top:6px}
+.card h2.print-title{font-size:28px;text-transform:none;letter-spacing:-.04em;color:#fff;font-weight:700}
+.print-guide ol{margin:8px 0 0;padding-left:18px;line-height:1.55;color:rgba(255,255,255,.82)}
+.print-guide li{margin:6px 0}
+.pill.warn{background:rgba(255,91,0,.2);color:#ffb38a}
+.pill.bad{background:rgba(239,68,68,.18);color:#fca5a5}
+.table-wrap{overflow:auto}
+.print-filters{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-items:end}
+.print-filters .btn{margin-bottom:14px}
+.print-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+@media(max-width:800px){
+  .print-grid,.print-stats,.print-form,.print-preview,.print-filters{grid-template-columns:1fr}
+  .print-preview iframe{height:180px}
+}

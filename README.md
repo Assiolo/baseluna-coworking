@@ -22,3 +22,23 @@ Pagamenti (demo, nessun gateway): Fatturazione, PayPal, Contanti, Satispay.
   Segnaposto opzionali nel link: `{amount}` (euro) o `{amount_cents}`. Senza segnaposto il link si apre così com'è e l'importo è mostrato sulla nostra pagina. Se vuoto: pagina «In attesa del link di pagamento», nessun redirect.
 - **Contanti**: ogni prenotazione in contanti scrive una notifica in `data/notifications.json` (utente, email, scrivania, date, importo, `sent:false`) e appare in Admin come «Contanti da riscuotere». L'invio reale (email/messaggio) allo studio lo fa l'agente Grok Bot leggendo questo file: nessun indirizzo email è configurato nel codice.
 - **Foto hero**: metti una foto dello studio in `public/` e scrivi in `data/config.json` `"heroImage": "/studio.jpg"` (variabile CSS `--hero`). Vuoto = sfondo gradiente scuro con forme cromate.
+
+## Stampa (credito)
+
+Ogni membro ha la voce **Stampa**: carica un PDF (o un’immagine; i file Office passano da LibreOffice solo se `soffice` è installato sul server), vede l’anteprima e il costo, e mette il lavoro in coda. Il credito si scala all’invio e viene rimborsato se il lavoro fallisce o viene annullato mentre è in coda. Il saldo non va mai sotto zero.
+
+Le stampanti non sono nel codice. In **Admin → Gestione stampe** si aggiungono una o più code (nome, posizione, IPP / raw 9100 / coda CUPS, IP o URI, colore, fronte/retro, A4/A3, prezzi propri, ID dell’agente che le serve). Si abilitano e si rendono visibili quando l’indirizzo c’è. Senza stampanti il membro vede «Nessuna stampante disponibile».
+
+L’agente in `print-agent/` sta sul PC in LAN, parla solo in HTTPS in uscita e riceve l’elenco stampanti dal sito. Vedi `print-agent/README.md`. Per provare senza hardware: `backend: "file"` (scrive PDF e opzioni in una cartella).
+
+Variabili:
+
+- `PRINT_AGENT_TOKEN` — segreto condiviso con l’agente. Se manca, il sito funziona e l’API agente risponde 503.
+- `PRINT_STRIPE_ENABLED=1`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — ricarica online. Senza chiavi o senza flag il pulsante non compare e il banco (ricarica manuale) resta disponibile. Webhook: `POST /api/print/stripe/webhook`.
+- `PUBLIC_BASE_URL` — origine pubblica usata da Stripe per il ritorno (es. `https://….onrender.com`).
+- `STRIPE_CURRENCY` — default `eur`.
+- `SOFFICE_PATH` — binario LibreOffice, se non è in `/usr/bin/soffice`.
+
+Prezzi iniziali, da cambiare nel pannello: B/N 0,05 €, colore 0,20 €, fronte/retro B/N 0,04 €, fronte/retro colore 0,15 € a facciata. Quota mensile vuota = nessun tetto. Le tabelle (`printers`, `print_jobs`, `credit_ledger`, …) si creano all’avvio come il resto, se mancano.
+
+Lo studio deve ancora decidere: modello e IP della stampante, protocollo, prezzi, eventuale tetto pagine, e su quale PC gira l’agente (`agentId`, es. `studio-1`).

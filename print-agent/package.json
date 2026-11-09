@@ -1,0 +1,16 @@
+{
+  "name": "baseluna-print-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Agente locale Base Luna: preleva i lavori dal sito e li manda alla stampante in LAN.",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js",
+    "once": "node agent.js --once",
+    "test": "node test/file-backend.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "ISC"
+}

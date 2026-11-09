@@ -1,0 +1,17 @@
+[Unit]
+Description=Base Luna print agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/baseluna-print-agent
+EnvironmentFile=-/etc/baseluna-print-agent.env
+ExecStart=/usr/bin/node agent.js
+Restart=on-failure
+RestartSec=5
+User=baseluna
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

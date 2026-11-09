@@ -8,3 +8,5 @@ data/notifications.json
 data/db.json
 public/uploads/avatars/*
 !public/uploads/avatars/.gitkeep
+print-agent/config.json
+print-agent/print-out/
