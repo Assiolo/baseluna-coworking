@@ -926,7 +926,53 @@ async function stats() {
     HAVING COUNT(j.id) > 0
     ORDER BY pages DESC, u.name
   `);
+  const today = await db.getPool().query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'completata')::int AS jobs,
+      COALESCE(SUM(pages_printed) FILTER (WHERE status = 'completata'), 0)::int AS pages
+    FROM print_jobs
+    WHERE (created_at AT TIME ZONE 'Europe/Rome') >= date_trunc('day', NOW() AT TIME ZONE 'Europe/Rome')
+  `);
+  const pending = await db.getPool().query(`
+    SELECT COUNT(*)::int AS n FROM print_jobs WHERE status IN ('in coda', 'in stampa')
+  `);
+  const perPrinter = await db.getPool().query(`
+    SELECT printer_id,
+      COUNT(*) FILTER (WHERE status IN ('in coda', 'in stampa'))::int AS pending,
+      COUNT(*) FILTER (
+        WHERE status = 'completata'
+          AND (created_at AT TIME ZONE 'Europe/Rome') >= date_trunc('day', NOW() AT TIME ZONE 'Europe/Rome')
+      )::int AS jobs_today,
+      COALESCE(SUM(pages_printed) FILTER (
+        WHERE status = 'completata'
+          AND (created_at AT TIME ZONE 'Europe/Rome') >= date_trunc('day', NOW() AT TIME ZONE 'Europe/Rome')
+      ), 0)::int AS pages_today,
+      COUNT(*) FILTER (
+        WHERE status = 'completata'
+          AND (created_at AT TIME ZONE 'Europe/Rome') >= date_trunc('month', NOW() AT TIME ZONE 'Europe/Rome')
+      )::int AS jobs_month,
+      COALESCE(SUM(pages_printed) FILTER (
+        WHERE status = 'completata'
+          AND (created_at AT TIME ZONE 'Europe/Rome') >= date_trunc('month', NOW() AT TIME ZONE 'Europe/Rome')
+      ), 0)::int AS pages_month
+    FROM print_jobs
+    WHERE printer_id IS NOT NULL
+    GROUP BY printer_id
+  `);
   return {
+    today: {
+      jobs: today.rows[0].jobs,
+      pages: today.rows[0].pages,
+    },
+    pending: pending.rows[0].n,
+    byPrinter: perPrinter.rows.map((r) => ({
+      printerId: r.printer_id,
+      pending: r.pending,
+      jobsToday: r.jobs_today,
+      pagesToday: r.pages_today,
+      jobsMonth: r.jobs_month,
+      pagesMonth: r.pages_month,
+    })),
     month: {
       jobs: month.rows[0].jobs,
       pages: month.rows[0].pages,

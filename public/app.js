@@ -1,3 +1,4 @@
+// v20261110a: admin a blocchi + menu hamburger
 // v20261105a: guida primo accesso (tour.js)
 // v20261103m: bg + colori desk + no reload pick
 // v20261103l: fix bg sotto .bg opaco
@@ -63,15 +64,81 @@ function startLiveClock(root=document){
   _clockTimer=setInterval(tick,1000);
 }
 let LANDED=false,paintGen=0;
-function render(){const gen=++paintGen;document.body.classList.toggle('app-bg',!!ME);if(!ME){if(window.BaseTour)BaseTour.onLoggedOut();return LANDED?authView('login'):landing()}if(window.BaseTour&&!BaseTour.active&&!BaseTour.seen())BaseTour.arm=true;A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><div class="nav-brand"><b id="goHome" style="cursor:pointer">Base <span>Luna</span> Coworking</b><a id="openGuida" class="nav-guida">Guida</a></div>${avatar()}${[['home','Home',''],['prenota','Prenota','nav-prenota'],['mie','Le mie prenotazioni',''],['stampa','Stampa',''],['profilo','Il mio profilo','profile'],...(ME.role==='admin'?[['admin','Admin','']]: [])].map(([k,l,t])=>`<a class="${view===k?'on':''}" data-v="${k}"${t?` data-tour="${t}"`:''}>${l}</a>`).join('')}<a id="out">Esci</a></nav><main id="m"></main>`;
- A.querySelectorAll('[data-v]').forEach(a=>a.onclick=()=>{view=a.dataset.v;render()});$('#out').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}ME=null;LANDED=false;view='home';document.body.classList.remove('app-bg');render()};
+const NAV_MQ='(max-width:1040px)';
+function navIsMobile(){return matchMedia(NAV_MQ).matches}
+function navBurger(){return `<button type="button" class="nav-burger" id="navBurger" aria-label="Apri il menu" aria-expanded="false" aria-controls="navMenu" aria-haspopup="dialog"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button>`}
+function navPanel(links){return `<div class="nav-panel" id="navMenu"><div class="nav-panel-bar"><span>Menu</span><button type="button" class="nav-close" id="navClose" aria-label="Chiudi il menu">Chiudi</button></div><div class="nav-links">${links}</div></div>`}
+function setNavOpen(open,opts){
+  const burger=document.getElementById('navBurger');
+  const menu=document.getElementById('navMenu');
+  const nav=document.querySelector('nav');
+  if(!burger||!menu) return;
+  if(!navIsMobile()) open=false;
+  document.body.classList.toggle('nav-open',!!open);
+  burger.setAttribute('aria-expanded',open?'true':'false');
+  burger.setAttribute('aria-label',open?'Chiudi il menu':'Apri il menu');
+  if(open){
+    if(menu.parentElement!==document.body) document.body.appendChild(menu);
+    menu.setAttribute('role','dialog');
+    menu.setAttribute('aria-modal','true');
+    menu.setAttribute('aria-label','Menu di navigazione');
+    menu.setAttribute('aria-hidden','false');
+    if(!(opts&&opts.silent)){const c=document.getElementById('navClose');if(c)c.focus()}
+  }else{
+    if(nav&&menu.parentElement!==nav) nav.appendChild(menu);
+    menu.removeAttribute('role');
+    menu.removeAttribute('aria-modal');
+    menu.removeAttribute('aria-label');
+    if(navIsMobile()) menu.setAttribute('aria-hidden','true');
+    else menu.removeAttribute('aria-hidden');
+  }
+}
+function bindNav(){
+  const burger=document.getElementById('navBurger');
+  const menu=document.getElementById('navMenu');
+  const closeBtn=document.getElementById('navClose');
+  if(!burger||!menu) return;
+  setNavOpen(false);
+  burger.onclick=()=>setNavOpen(!document.body.classList.contains('nav-open'));
+  if(closeBtn) closeBtn.onclick=()=>{setNavOpen(false);burger.focus()};
+  menu.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>setNavOpen(false)));
+}
+window.BaseNav={setOpen:setNavOpen,syncFor(el){const menu=document.getElementById('navMenu');setNavOpen(!!(el&&menu&&menu.contains(el)),{silent:true})}};
+document.addEventListener('keydown',e=>{
+  if(!document.body.classList.contains('nav-open')) return;
+  if(e.key==='Escape'){
+    if(window.BaseTour&&BaseTour.active) return;
+    e.preventDefault();
+    const burger=document.getElementById('navBurger');
+    setNavOpen(false);
+    if(burger) burger.focus();
+    return;
+  }
+  if(e.key!=='Tab') return;
+  const menu=document.getElementById('navMenu');
+  if(!menu) return;
+  const items=[...menu.querySelectorAll('a,button')];
+  if(!items.length) return;
+  const first=items[0],last=items[items.length-1];
+  if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}
+  else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}
+});
+matchMedia(NAV_MQ).addEventListener('change',e=>{if(!e.matches) setNavOpen(false)});
+function render(){const gen=++paintGen;document.body.classList.remove('nav-open');document.body.classList.toggle('app-bg',!!ME);if(!ME){if(window.BaseTour)BaseTour.onLoggedOut();return LANDED?authView('login'):landing()}if(window.BaseTour&&!BaseTour.active&&!BaseTour.seen())BaseTour.arm=true;
+ const items=[['home','Home',''],['prenota','Prenota','nav-prenota'],['mie','Le mie prenotazioni',''],['stampa','Stampa',''],['profilo','Il mio profilo','profile'],...(ME.role==='admin'?[['admin','Admin','']]:[])];
+ const links=items.map(([k,l,t])=>`<a class="${view===k?'on':''}" data-v="${k}"${t?` data-tour="${t}"`:''}>${l}</a>`).join('')+'<a id="openGuidaMenu" class="nav-menu-only">Guida</a><a id="out">Esci</a>';
+ A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><div class="nav-brand"><b id="goHome">Base <span>Luna</span> <span class="nav-fullword">Coworking</span></b><a id="openGuida" class="nav-guida">Guida</a></div>${avatar()}${navBurger()}${navPanel(links)}</nav><main id="m"></main>`;
+ A.querySelectorAll('[data-v]').forEach(a=>a.onclick=()=>{view=a.dataset.v;render()});$('#out').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}ME=null;LANDED=false;view='home';document.body.classList.remove('app-bg','nav-open');render()};
  $('#goHome').onclick=()=>{view='home';render()};
- const guida=$('#openGuida');if(guida)guida.onclick=e=>{e.preventDefault();if(window.BaseTour)BaseTour.open()};
+ const openGuide=()=>{if(window.BaseTour)BaseTour.open()};
+ const guida=$('#openGuida');if(guida)guida.onclick=e=>{e.preventDefault();openGuide()};
+ const guidaM=$('#openGuidaMenu');if(guidaM)guidaM.onclick=e=>{e.preventDefault();setNavOpen(false);openGuide()};
+ bindNav();
  const job=({home:homeView,prenota:bookView,mie:mineView,admin:adminView,profilo:profileView,stampa:()=>window.PrintUI.member(),gestione:()=>window.PrintUI.admin()})[view]();
  Promise.resolve(job).then(()=>{if(gen===paintGen&&window.BaseTour)BaseTour.afterPaint()},()=>{if(gen===paintGen&&window.BaseTour)BaseTour.afterPaint()})}
 function landing(){document.body.classList.remove('app-bg');const P=PLAN.pricing;const vid=SITE.heroVideo?`<video class="bgvid" autoplay muted loop playsinline poster="${SITE.heroImage||''}"><source src="${SITE.heroVideo}" type="video/mp4"></video><div class="bgvid-shade"></div>`:'';A.innerHTML=`<div class="land has-bgvid">
 ${vid}<div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="ring"></div><div class="pill3d"></div>
-<nav class="glass rise"><b class="brand"><i class="dot"></i>Base <span>Luna</span></b><a href="#spazi" class="hide-s">Spazi</a><a href="#prezzi" class="hide-s">Prezzi</a><a data-a="login">Accedi</a><a class="btn sm" data-a="reg">Registrati</a></nav>
+<nav class="glass rise"><b class="brand"><i class="dot"></i>Base <span>Luna</span></b>${navBurger()}${navPanel('<a href="#spazi">Spazi</a><a href="#prezzi">Prezzi</a><a data-a="login">Accedi</a><a class="btn sm" data-a="reg">Registrati</a>')}</nav>
 <header class="hero2"><div class="htxt"><p class="kick rise" style="--d:.1s"><i></i>Damanhur Crea · Creative studio & coworking</p>
 <h1 class="mega rise" style="--d:.2s">Crea<br><em>sulla</em> <span class="grad">Luna.</span></h1>
 <p class="lead rise" style="--d:.35s">Scrivanie in uno studio creativo dove design, AI e idee condividono lo stesso tavolo. Scegli la postazione, prenota un giorno o un mese intero.</p>
@@ -104,6 +171,7 @@ return `<div class="hc-live"><div class="hc-top"><small>Oggi in studio</small></
 <button class="btn sm" data-a="reg" style="align-self:flex-start;margin-top:18px">Vieni in studio →</button></div></section>
 <footer class="foot"><b>Base <span>Luna</span> Studio</b><small>Torino · baselunastudio.it</small></footer></div>`;
  A.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{LANDED=true;authView(b.dataset.a)});
+ bindNav();
  const L=A.querySelector('.land'),T=A.querySelector('#tilt'),RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
  const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:.15});L.querySelectorAll('.reveal').forEach((r,i)=>{r.style.setProperty('--d',(i%3)*.12+'s');io.observe(r)});
  if(!RM)L.onmousemove=e=>{const x=e.clientX/innerWidth-.5,y=e.clientY/innerHeight-.5;L.querySelectorAll('.orb,.ring,.pill3d').forEach((s,i)=>s.style.translate=`${x*(i+1)*-22}px ${y*(i+1)*-22}px`);if(T)T.style.transform=`perspective(1000px) rotateY(${x*14}deg) rotateX(${-y*14}deg)`;L.style.setProperty('--mx',e.clientX+'px');L.style.setProperty('--my',e.clientY+'px')};startLiveClock(A)}
@@ -231,9 +299,45 @@ async function bookView(){const gen=paintGen;await loadOcc();try{const site=awai
 function calendar(){const[y,m]=S.month.split('-').map(Number),n=new Date(y,m,0).getDate(),off=(new Date(y,m-1,1).getDay()+6)%7;let h='LMMGVSD'.split('').map(c=>`<div class="h">${c}</div>`).join('')+'<div style="background:none"></div>'.repeat(off);
  for(let d=1;d<=n;d++){const ds=`${S.month}-${String(d).padStart(2,'0')}`,we=[0,6].includes(new Date(y,m-1,d).getDay()),c=S.occ.filter(b=>b.date===ds).length;h+=`<div class="${we?'we':c>=PLAN.desks.length?'full':''}">${d}<br><small style="color:var(--g)">${we?'–':(PLAN.desks.length-new Set(S.occ.filter(b=>b.date===ds).map(b=>b.deskId)).size)+' lib.'}</small></div>`}
  return`<label>Disponibilità del mese</label><div class="cal">${h}</div>`}
-async function mineView(){const b=await api('/api/bookings/mine');$('#m').innerHTML=`<h1>Le mie prenotazioni</h1><p class="sub">${b.filter(x=>x.status==='confermata').length} attive</p><div class="glass card"><table><tr><th>Data</th><th>Scrivania</th><th>Fascia</th><th>Tipo</th><th>Pagamento</th><th>Stato</th><th></th></tr>${b.map(x=>`<tr><td>${x.date}</td><td>${x.deskId}</td><td>${SLOT[x.slot]}</td><td>${x.mode}</td><td>${PAY[x.payment]||x.payment}</td><td><span class="pill ${x.status!=='confermata'?'off':''}">${x.status}</span></td><td>${x.status!=='annullata'?`${x.status==='in attesa di pagamento'?`<a class="btn sm" href="/pay/${x.payment}?g=${x.group}" target="_blank" rel="noopener">Paga</a> `:''}<button class="btn sm ghost" data-id="${x.id}">Annulla</button>`:''}</td></tr>`).join('')||'<tr><td colspan=7>Nessuna prenotazione</td></tr>'}</table></div>`;
+async function mineView(){const b=await api('/api/bookings/mine');$('#m').innerHTML=`<h1>Le mie prenotazioni</h1><p class="sub">${b.filter(x=>x.status==='confermata').length} attive</p><div class="glass card"><div class="table-scroll"><table><tr><th>Data</th><th>Scrivania</th><th>Fascia</th><th>Tipo</th><th>Pagamento</th><th>Stato</th><th></th></tr>${b.map(x=>`<tr><td>${x.date}</td><td>${x.deskId}</td><td>${SLOT[x.slot]}</td><td>${x.mode}</td><td>${PAY[x.payment]||x.payment}</td><td><span class="pill ${x.status!=='confermata'?'off':''}">${x.status}</span></td><td>${x.status!=='annullata'?`${x.status==='in attesa di pagamento'?`<a class="btn sm" href="/pay/${x.payment}?g=${x.group}" target="_blank" rel="noopener">Paga</a> `:''}<button class="btn sm ghost" data-id="${x.id}">Annulla</button>`:''}</td></tr>`).join('')||'<tr><td colspan=7>Nessuna prenotazione</td></tr>'}</table></div></div>`;
  $('#m').querySelectorAll('[data-id]').forEach(e=>e.onclick=async()=>{await api('/api/bookings/'+e.dataset.id,{method:'DELETE'});mineView()})}
-async function adminView(){const[u,b,pp,pr]=await Promise.all([api('/api/admin/users'),api('/api/admin/bookings'),api('/api/admin/payments'),api('/api/admin/pricing')]);
+function seenLabel(iso){
+  if(!iso) return 'agente mai visto';
+  const t=new Date(iso).getTime();
+  if(!Number.isFinite(t)) return 'agente mai visto';
+  const sec=Math.round((Date.now()-t)/1000);
+  if(sec<90&&sec>-30) return 'visto ora';
+  if(sec<3600) return 'visto '+Math.max(1,Math.round(sec/60))+' min fa';
+  if(sec<86400) return 'visto '+Math.round(sec/3600)+' h fa';
+  try{return 'visto il '+new Date(iso).toLocaleString('it-IT',{timeZone:'Europe/Rome',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}
+  catch{return 'visto'}
+}
+function renderPrintBlock(printRes){
+  const go='<button type="button" class="btn" id="go-print-admin">Apri Gestione stampe</button>';
+  if(!printRes.ok){
+    return `<section class="glass card adm-block adm-print adm-span"><div class="adm-block-h"><div><p class="adm-kicker">Stampanti di rete</p><h2>Gestione stampe</h2><p class="sub">Il riepilogo non è disponibile in questo momento.</p><p class="err">${esc(printRes.error)}</p></div>${go}</div></section>`;
+  }
+  const data=printRes.data||{};
+  const stats=data.stats||{};
+  const printers=data.printers||[];
+  const online=printers.filter(p=>p.online).length;
+  const actOf=id=>(stats.byPrinter||[]).find(p=>p.printerId===id)||{pending:0,jobsToday:0,pagesToday:0,jobsMonth:0,pagesMonth:0};
+  const cards=printers.length?printers.map(p=>{
+    const a=actOf(p.id);
+    return `<li class="adm-printer"><div class="adm-printer-id"><b>${esc(p.name)}</b><span>${p.location?esc(p.location):'senza posizione'}</span></div><div class="adm-pills"><span class="pill ${p.enabled?'':'off'}">${p.enabled?'abilitata':'disabilitata'}</span><span class="pill ${p.online?'':'bad'}">${p.online?'in linea':'offline'}</span><span class="adm-seen">${p.agentId?esc(p.agentId):'nessun agente'} · ${esc(seenLabel(p.lastHeartbeat))}</span></div><div class="adm-printer-stats"><div><small>Oggi</small><b>${a.jobsToday} lavori · ${a.pagesToday} pagine</b></div><div><small>Questo mese</small><b>${a.jobsMonth} lavori · ${a.pagesMonth} pagine</b></div><div><small>In coda</small><b>${a.pending}</b></div></div></li>`;
+  }).join(''):'<li class="adm-printer adm-printer-empty"><div><b>Nessuna stampante configurata</b><span>Aggiungila da Gestione stampe: nome, posto e agente.</span></div></li>';
+  const todayJobs=(stats.today&&stats.today.jobs)||0;
+  const todayPages=(stats.today&&stats.today.pages)||0;
+  const monthJobs=(stats.month&&stats.month.jobs)||0;
+  const monthPages=(stats.month&&stats.month.pages)||0;
+  const pending=stats.pending||0;
+  return `<section class="glass card adm-block adm-print adm-span"><div class="adm-block-h"><div><p class="adm-kicker">Stampanti di rete</p><h2>Gestione stampe</h2><p class="sub">${printers.length} stampant${printers.length===1?'e':'i'} · ${online} in linea · ${pending} lavor${pending===1?'o':'i'} in coda</p></div>${go}</div><div class="adm-kpis"><div><small>Oggi</small><b>${todayJobs} lavori</b><span>${todayPages} pagine</span></div><div><small>Questo mese</small><b>${monthJobs} lavori</b><span>${monthPages} pagine</span></div><div><small>In coda</small><b>${pending}</b><span>da stampare</span></div><div><small>In linea</small><b>${online}/${printers.length}</b><span>agenti collegati</span></div></div><ul class="adm-printers">${cards}</ul></section>`;
+}
+async function adminView(){
+ const gen=paintGen;
+ const printP=api('/api/admin/print/overview').then(data=>({ok:true,data})).catch(err=>({ok:false,error:(err&&err.message)||'Errore'}));
+ const[u,b,pp,pr,printRes]=await Promise.all([api('/api/admin/users'),api('/api/admin/bookings'),api('/api/admin/payments'),api('/api/admin/pricing'),printP]);
+ if(gen!==paintGen||view!=='admin')return;
  const active=b.filter(x=>x.status!=='annullata');
  const byMonth={};
  active.forEach(x=>{const mo=(x.date||'').slice(0,7)||'????-??';(byMonth[mo]=byMonth[mo]||[]).push(x)});
@@ -245,26 +349,36 @@ async function adminView(){const[u,b,pp,pr]=await Promise.all([api('/api/admin/u
   const dayBlocks=days.map(day=>{
    const list=byDay[day];
    return `<div class="adm-day"><div class="adm-day-h"><b>${esc(day)}</b><span class="sub">${list.length} prenotaz.</span><button class="btn sm ghost danger" data-cancel-day="${esc(day)}">Annulla tutta la giornata</button></div>
-   <table><tr><th>Utente</th><th>Scrivania</th><th>Fascia</th><th>Tipo</th><th>Pagamento</th><th>Stato</th><th></th></tr>
+   <div class="table-scroll"><table><tr><th>Utente</th><th>Scrivania</th><th>Fascia</th><th>Tipo</th><th>Pagamento</th><th>Stato</th><th></th></tr>
    ${list.map(x=>`<tr><td>${esc(x.user)}</td><td>${esc(x.deskId)}</td><td>${esc(SLOT[x.slot]||x.slot)}</td><td>${esc(x.mode)}</td><td>${esc(PAY[x.payment]||x.payment)}</td><td><span class="pill ${x.status!=='confermata'?'off':''}">${esc(x.status)}</span></td><td><button class="btn sm ghost" data-b="${x.id}">Annulla</button></td></tr>`).join('')}
-   </table></div>`;
+   </table></div></div>`;
   }).join('');
   return `<div class="adm-month glass card"><div class="adm-month-h"><h3>${esc(mo)}</h3><span class="sub">${rows.length} prenotaz.</span><button class="btn sm ghost danger" data-cancel-month="${esc(mo)}">Annulla tutto il mese</button></div>${dayBlocks||'<p class="sub">Nessuna</p>'}</div>`;
  }).join('')||'<div class="glass card"><p class="sub">Nessuna prenotazione attiva</p></div>';
- $('#m').innerHTML=`<h1>Admin</h1><p class="sub">${u.length} account · ${active.filter(x=>x.status==='confermata').length} confermate · ${active.length} attive</p>
- <div style="margin:-6px 0 18px"><button class="btn" id="go-print-admin">Gestione stampe</button></div>
- <div class="glass card"><h2>Pacchetti</h2><p class="sub">Prezzi salvati nel database. Landing e Prenota li leggono da qui.</p>
- <div class="row" style="gap:12px;flex-wrap:wrap">
-  <div><label>Mattina 9–13 (€)</label><input type="number" min="0" step="0.01" id="pr-mattina" value="${pr.mattina??''}"></div>
-  <div><label>Pomeriggio 14–19 (€)</label><input type="number" min="0" step="0.01" id="pr-pomeriggio" value="${pr.pomeriggio??''}"></div>
-  <div><label>Giornata intera (€)</label><input type="number" min="0" step="0.01" id="pr-giornata" value="${pr.giornata??''}"></div>
-  <div><label>Mensile (€)</label><input type="number" min="0" step="0.01" id="pr-mensile" value="${pr.mensile??''}"></div>
- </div>
- <button class="btn" id="pr-save" style="margin-top:12px">Salva prezzi</button> <span id="pr-msg" class="sub"></span></div>
- <div class="glass card"><h2>Pagamenti da registrare</h2><p class="sub">Contanti da riscuotere, bonifici, Satispay/PayPal in attesa. Confermata solo dopo «Pagato».</p><table><tr><th>Utente</th><th>Scrivania</th><th>Periodo</th><th>Metodo</th><th>Importo</th><th>Stato</th><th></th></tr>${pp.map(p=>`<tr><td>${esc(p.user)}</td><td>${esc(p.deskId)}</td><td>${esc(p.dates[0])}${p.days>1?' → '+esc(p.dates[1]):''}</td><td>${p.method==='contanti'?'<b>Contanti da riscuotere</b>':esc(PAY[p.method]||p.method)}</td><td>€${p.amount}</td><td>${esc(p.status)}</td><td><button class="btn sm" data-p="${p.group}">Pagato ✓</button></td></tr>`).join('')||'<tr><td colspan=7>Nessuno</td></tr>'}</table></div>
- <div class="glass card"><h2>Account</h2><table><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Prenot.</th><th>Stato</th><th></th></tr>${u.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.email)}</td><td>${esc(x.role)}</td><td>${x.bookings}</td><td><span class="pill ${x.active?'':'off'}">${x.active?'attivo':'disattivato'}</span></td><td>${x.id!==ME.id?`<button class="btn sm ghost" data-u="${x.id}" data-a="${x.active?0:1}">${x.active?'Disattiva':'Riattiva'}</button> <button class="btn sm ghost" data-r="${x.id}" data-role="${x.role==='admin'?'user':'admin'}">${x.role==='admin'?'Rendi utente':'Rendi admin'}</button> <button class="btn sm ghost danger" data-del="${x.id}">Elimina account</button>`:'(tu)'}</td></tr>`).join('')}</table></div>
- <h2 style="margin-top:28px">Prenotazioni per mese / giorno</h2>
- ${monthHtml}`;
+ const todayIso=today();
+ const todayRows=active.filter(x=>x.date===todayIso).slice().sort((a,c)=>String(a.deskId).localeCompare(String(c.deskId))||String(a.user||'').localeCompare(String(c.user||'')));
+ const confirmed=active.filter(x=>x.status==='confermata').length;
+ const activeUsers=u.filter(x=>x.active).length;
+ const todayList=todayRows.map(x=>`<li><b>${esc(x.deskId)}</b><span>${esc(x.user||'')} · ${esc(SLOT[x.slot]||x.slot)}</span><span class="pill ${x.status!=='confermata'?'off':''}">${esc(x.status)}</span></li>`).join('')||'<li class="adm-empty">Nessuna prenotazione oggi.</li>';
+ const payRows=pp.map(p=>`<tr><td>${esc(p.user)}</td><td>${esc(p.deskId)}</td><td>${esc(p.dates[0])}${p.days>1?' → '+esc(p.dates[1]):''}</td><td>${p.method==='contanti'?'<b>Contanti da riscuotere</b>':esc(PAY[p.method]||p.method)}</td><td>€${p.amount}</td><td>${esc(p.status)}</td><td><button class="btn sm" data-p="${esc(p.group)}">Pagato ✓</button></td></tr>`).join('')||'<tr><td colspan="7">Nessuno</td></tr>';
+ $('#m').innerHTML=`<h1>Admin</h1><p class="sub">${u.length} account · ${confirmed} confermate · ${active.length} attive</p>
+ <div class="adm-grid">
+ ${renderPrintBlock(printRes)}
+ <section class="glass card adm-block"><h2>Pacchetti</h2><p class="sub">Prezzi usati in home e in Prenota.</p>
+  <div class="adm-packs">
+   <label class="adm-pack"><span>Mattina <small>9–13</small></span><span class="adm-euro">€<input type="number" min="0" step="0.01" id="pr-mattina" value="${pr.mattina??''}"></span></label>
+   <label class="adm-pack"><span>Pomeriggio <small>14–19</small></span><span class="adm-euro">€<input type="number" min="0" step="0.01" id="pr-pomeriggio" value="${pr.pomeriggio??''}"></span></label>
+   <label class="adm-pack"><span>Giorno intero</span><span class="adm-euro">€<input type="number" min="0" step="0.01" id="pr-giornata" value="${pr.giornata??''}"></span></label>
+   <label class="adm-pack"><span>Mensile</span><span class="adm-euro">€<input type="number" min="0" step="0.01" id="pr-mensile" value="${pr.mensile??''}"></span></label>
+  </div>
+  <button class="btn" id="pr-save">Salva prezzi</button> <span id="pr-msg" class="sub"></span>
+ </section>
+ <section class="glass card adm-block adm-pay"><h2>Pagamenti da registrare</h2><p class="sub">Contanti da riscuotere, bonifici, Satispay e PayPal in attesa. La prenotazione è confermata solo dopo «Pagato».</p><div class="table-scroll"><table><tr><th>Utente</th><th>Scrivania</th><th>Periodo</th><th>Metodo</th><th>Importo</th><th>Stato</th><th></th></tr>${payRows}</table></div></section>
+ <section class="glass card adm-block"><h2>Oggi in studio</h2><p class="sub">${esc(todayIso)} · ${todayRows.length} prenotazion${todayRows.length===1?'e':'i'}</p><ul class="adm-today">${todayList}</ul></section>
+ <section class="glass card adm-block"><h2>Situazione</h2><ul class="adm-facts"><li><b>${u.length}</b><span>account, ${activeUsers} attivi</span></li><li><b>${confirmed}</b><span>prenotazioni confermate</span></li><li><b>${active.length}</b><span>prenotazioni attive</span></li><li><b>${pp.length}</b><span>pagamenti da registrare</span></li></ul></section>
+ <section class="glass card adm-block adm-span"><h2>Account</h2><div class="table-scroll"><table><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Prenot.</th><th>Stato</th><th></th></tr>${u.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.email)}</td><td>${esc(x.role)}</td><td>${x.bookings}</td><td><span class="pill ${x.active?'':'off'}">${x.active?'attivo':'disattivato'}</span></td><td>${x.id!==ME.id?`<button class="btn sm ghost" data-u="${x.id}" data-a="${x.active?0:1}">${x.active?'Disattiva':'Riattiva'}</button> <button class="btn sm ghost" data-r="${x.id}" data-role="${x.role==='admin'?'user':'admin'}">${x.role==='admin'?'Rendi utente':'Rendi admin'}</button> <button class="btn sm ghost danger" data-del="${x.id}">Elimina account</button>`:'(tu)'}</td></tr>`).join('')}</table></div></section>
+ <section class="adm-span adm-bookings"><h2 class="adm-sec">Prenotazioni</h2><p class="sub">Per mese e per giorno. Da qui annulli una prenotazione, una giornata o un mese intero.</p>${monthHtml}</section>
+ </div>`;
  const m=$('#m');
  const goPrint=$('#go-print-admin');if(goPrint)goPrint.onclick=()=>{view='gestione';render()};
  m.querySelectorAll('[data-p]').forEach(e=>e.onclick=async()=>{await api('/api/admin/pay/'+e.dataset.p+'/paid',{method:'POST'});adminView()});

@@ -123,6 +123,7 @@
       this._driving = false;
       this.arm = false;
       document.body.classList.remove('tour-on');
+      if (window.BaseNav) window.BaseNav.setOpen(false);
       const tilt = document.getElementById('tilt');
       if (tilt) tilt.style.transform = '';
       if (this.root) this.root.hidden = true;
@@ -191,6 +192,7 @@
       }
       this._skipGuard = 0;
       this._placing = true;
+      if (window.BaseNav) window.BaseNav.syncFor(el);
       const preview = el.getBoundingClientRect();
       const nav = document.querySelector('body.app-bg nav');
       if (nav && nav.contains(el)) {
