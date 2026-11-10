@@ -320,18 +320,26 @@ function renderPrintBlock(printRes){
   const data=printRes.data||{};
   const stats=data.stats||{};
   const printers=data.printers||[];
-  const online=printers.filter(p=>p.online).length;
+  const agents=printers.filter(p=>p.connectionType!=='cloud');
+  const online=agents.filter(p=>p.online).length;
+  const cloudN=printers.length-agents.length;
   const actOf=id=>(stats.byPrinter||[]).find(p=>p.printerId===id)||{pending:0,jobsToday:0,pagesToday:0,jobsMonth:0,pagesMonth:0};
   const cards=printers.length?printers.map(p=>{
     const a=actOf(p.id);
-    return `<li class="adm-printer"><div class="adm-printer-id"><b>${esc(p.name)}</b><span>${p.location?esc(p.location):'senza posizione'}</span></div><div class="adm-pills"><span class="pill ${p.enabled?'':'off'}">${p.enabled?'abilitata':'disabilitata'}</span><span class="pill ${p.online?'':'bad'}">${p.online?'in linea':'offline'}</span><span class="adm-seen">${p.agentId?esc(p.agentId):'nessun agente'} · ${esc(seenLabel(p.lastHeartbeat))}</span></div><div class="adm-printer-stats"><div><small>Oggi</small><b>${a.jobsToday} lavori · ${a.pagesToday} pagine</b></div><div><small>Questo mese</small><b>${a.jobsMonth} lavori · ${a.pagesMonth} pagine</b></div><div><small>In coda</small><b>${a.pending}</b></div></div></li>`;
+    const cloud=p.connectionType==='cloud';
+    const state=cloud?'<span class="pill warn">via email</span>':`<span class="pill ${p.online?'':'bad'}">${p.online?'in linea':'offline'}</span>`;
+    const who=cloud?`${esc(p.cloudLabel||'cloud')} · ${esc(p.cloudEmail||'email da definire')}`:`${p.agentId?esc(p.agentId):'nessun agente'} · ${esc(seenLabel(p.lastHeartbeat))}`;
+    return `<li class="adm-printer"><div class="adm-printer-id"><b>${esc(p.name)}</b><span>${p.location?esc(p.location):'senza posizione'}</span></div><div class="adm-pills"><span class="pill ${p.enabled?'':'off'}">${p.enabled?'abilitata':'disabilitata'}</span>${state}<span class="adm-seen">${who}</span></div><div class="adm-printer-stats"><div><small>Oggi</small><b>${a.jobsToday} lavori · ${a.pagesToday} pagine</b></div><div><small>Questo mese</small><b>${a.jobsMonth} lavori · ${a.pagesMonth} pagine</b></div><div><small>In coda</small><b>${a.pending}</b></div></div></li>`;
   }).join(''):'<li class="adm-printer adm-printer-empty"><div><b>Nessuna stampante configurata</b><span>Aggiungila da Gestione stampe: nome, posto e agente.</span></div></li>';
   const todayJobs=(stats.today&&stats.today.jobs)||0;
   const todayPages=(stats.today&&stats.today.pages)||0;
   const monthJobs=(stats.month&&stats.month.jobs)||0;
   const monthPages=(stats.month&&stats.month.pages)||0;
   const pending=stats.pending||0;
-  return `<section class="glass card adm-block adm-print adm-span"><div class="adm-block-h"><div><p class="adm-kicker">Stampanti di rete</p><h2>Gestione stampe</h2><p class="sub">${printers.length} stampant${printers.length===1?'e':'i'} · ${online} in linea · ${pending} lavor${pending===1?'o':'i'} in coda</p></div>${go}</div><div class="adm-kpis"><div><small>Oggi</small><b>${todayJobs} lavori</b><span>${todayPages} pagine</span></div><div><small>Questo mese</small><b>${monthJobs} lavori</b><span>${monthPages} pagine</span></div><div><small>In coda</small><b>${pending}</b><span>da stampare</span></div><div><small>In linea</small><b>${online}/${printers.length}</b><span>agenti collegati</span></div></div><ul class="adm-printers">${cards}</ul></section>`;
+  const lineBits=[printers.length+' stampant'+(printers.length===1?'e':'i'), online+' in linea'];
+  if(cloudN) lineBits.push(cloudN+' via email');
+  lineBits.push(pending+' lavor'+(pending===1?'o':'i')+' in coda');
+  return `<section class="glass card adm-block adm-print adm-span"><div class="adm-block-h"><div><p class="adm-kicker">Stampanti di rete</p><h2>Gestione stampe</h2><p class="sub">${lineBits.join(' · ')}</p></div>${go}</div><div class="adm-kpis"><div><small>Oggi</small><b>${todayJobs} lavori</b><span>${todayPages} pagine</span></div><div><small>Questo mese</small><b>${monthJobs} lavori</b><span>${monthPages} pagine</span></div><div><small>In coda</small><b>${pending}</b><span>da chiudere</span></div><div><small>In linea</small><b>${online}/${agents.length}</b><span>${cloudN?cloudN+' via email':'agenti collegati'}</span></div></div><ul class="adm-printers">${cards}</ul></section>`;
 }
 async function adminView(){
  const gen=paintGen;

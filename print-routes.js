@@ -122,8 +122,10 @@ function settingsFromBody(body) {
 function logConfig() {
   const token = !!String(process.env.PRINT_AGENT_TOKEN || '').trim();
   const pay = stripe.status();
+  const cloud = store.cloudStatus();
   console.log('Stampa: agente ' + (token ? 'attivo (token impostato)' : 'in attesa di PRINT_AGENT_TOKEN'));
   console.log('Stampa: ricarica Stripe ' + (pay.enabled ? 'attiva' : 'disattivata'));
+  console.log('Stampa: cloud email ' + (cloud.enabled ? 'attiva (' + cloud.transport + ')' : 'disattivata'));
 }
 
 function mountWebhook(app) {
@@ -164,7 +166,7 @@ function mount(app) {
     try {
       const settings = await store.getSettings();
       const printers = (await store.listPrinters())
-        .filter((p) => logic.memberCanUse(p))
+        .filter((p) => store.usableByMember(p))
         .map((p) => store.presentPrinter(p, settings, { admin: false }));
       const jobs = await store.listJobs({ userId: q.u.id, limit: 50 });
       const ledger = await store.ledgerFor(q.u.id, 30);
@@ -299,6 +301,7 @@ function mount(app) {
       s.json({
         tokenConfigured: !!String(process.env.PRINT_AGENT_TOKEN || '').trim(),
         stripe: stripe.status(),
+        cloud: store.cloudStatus(),
         settings,
         printers,
         stats: await store.stats(),
@@ -347,6 +350,18 @@ function mount(app) {
   app.post('/api/admin/print/jobs/:id/refund', auth, admin, async (q, s, next) => {
     try {
       s.json(await store.adminRefund(q.params.id, q.u.id, (q.body && q.body.note) || ''));
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/admin/print/jobs/:id/printed', auth, admin, async (q, s, next) => {
+    try {
+      s.json(await store.markPrinted(q.params.id));
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/admin/print/jobs/:id/resend', auth, admin, async (q, s, next) => {
+    try {
+      s.json(await store.resendCloud(q.params.id));
     } catch (err) { next(err); }
   });
 

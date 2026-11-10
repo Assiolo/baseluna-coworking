@@ -10,6 +10,7 @@
   let duplexOn = false;
   const filters = { userId: '', status: '', printerId: '', from: '', to: '' };
   let editing = null;
+  let cloudCfg = { enabled: false, from: '', reason: '' };
 
   function stop() { if (poll) clearInterval(poll); poll = null; }
 
@@ -27,8 +28,32 @@
   }
 
   function pill(status) {
-    const cls = status === 'completata' ? '' : status === 'in stampa' ? 'warn' : status === 'errore' ? 'bad' : 'off';
-    return `<span class="pill ${cls}">${esc(status)}</span>`;
+    const waiting = status === 'in stampa' || status === 'inviata al cloud' || status === 'invio al cloud';
+    const cls = status === 'completata' ? '' : waiting ? 'warn' : status === 'errore' ? 'bad' : 'off';
+    const title = status === 'inviata al cloud'
+      ? 'Il servizio ha accettato l’email. Non è la conferma che il foglio sia uscito.'
+      : status === 'invio al cloud'
+        ? 'Invio in corso, oppure interrotto prima della conferma del server di posta.'
+        : '';
+    return `<span class="pill ${cls}"${title ? ` title="${esc(title)}"` : ''}>${esc(status)}</span>`;
+  }
+
+  function jobActions(j, admin) {
+    const bits = [];
+    if (j.status === 'in coda' && !admin) bits.push(`<button class="btn sm ghost" data-cancel="${esc(j.id)}">Annulla</button>`);
+    if (admin && j.delivery === 'cloud' && (j.status === 'inviata al cloud' || j.status === 'invio al cloud')) {
+      bits.push(`<button class="btn sm ghost" data-printed="${esc(j.id)}">Segna stampata</button>`);
+    }
+    if (admin && j.delivery === 'cloud' && j.status === 'invio al cloud') {
+      bits.push(`<button class="btn sm ghost" data-resend="${esc(j.id)}">Reinvia</button>`);
+    }
+    if (admin && j.status !== 'rimborsata') bits.push(`<button class="btn sm ghost" data-refund="${esc(j.id)}">Rimborsa</button>`);
+    bits.push(`<a class="btn sm ghost" href="/api/print/jobs/${encodeURIComponent(j.id)}/file" target="_blank" rel="noopener">PDF</a>`);
+    return bits.join(' ');
+  }
+
+  function jobOpen(j) {
+    return j.status === 'in coda' || j.status === 'in stampa' || j.status === 'invio al cloud';
   }
 
   function quotaLine(q) {
@@ -46,7 +71,7 @@
       <td>${j.pagesSelected}×${j.copies}${j.pageRange ? ' · ' + esc(j.pageRange) : ''}<br><small style="color:var(--g)">${j.color ? 'colore' : 'b/n'} · ${j.duplex ? 'fronte/retro' : 'fronte'} · ${esc(j.format)}</small></td>
       <td>${euro(j.actualCostCents != null && j.status === 'completata' ? j.actualCostCents : j.costCents)}${j.unbilledCents ? `<br><small class="err">non addebitate ${euro(j.unbilledCents)}</small>` : ''}</td>
       <td>${pill(j.status)}${j.error ? `<br><small style="color:var(--g)">${esc(j.error)}</small>` : ''}</td>
-      <td class="print-actions">${j.status === 'in coda' && !admin ? `<button class="btn sm ghost" data-cancel="${esc(j.id)}">Annulla</button>` : ''}${admin && j.status !== 'rimborsata' ? `<button class="btn sm ghost" data-refund="${esc(j.id)}">Rimborsa</button>` : ''}<a class="btn sm ghost" href="/api/print/jobs/${encodeURIComponent(j.id)}/file" target="_blank" rel="noopener">PDF</a></td>
+      <td class="print-actions">${jobActions(j, admin)}</td>
     </tr>`).join('');
   }
 
@@ -69,7 +94,7 @@
     }
     if (my !== gen) return;
     paintMember(data, flash);
-    const active = (data.jobs || []).some((j) => j.status === 'in coda' || j.status === 'in stampa');
+    const active = (data.jobs || []).some(jobOpen);
     if (active || /Pagamento ricevuto/.test(flash)) {
       let n = 0;
       poll = setInterval(async () => {
@@ -88,7 +113,7 @@
           }
           const led = $('#print-ledger');
           if (led) led.innerHTML = ledgerRows(fresh.ledger);
-          if (!(fresh.jobs || []).some((j) => j.status === 'in coda' || j.status === 'in stampa') && n > 2) stop();
+          if (!(fresh.jobs || []).some(jobOpen) && n > 2) stop();
         } catch (e) { /* il prossimo giro riprova */ }
       }, 4000);
     }
@@ -103,7 +128,7 @@
     const empty = !printers.length;
     $('#m').innerHTML = `<div id="print-root">
       <h1>Stampa</h1>
-      <p class="sub">Carica un documento e stampalo in studio. Il credito si scala all’invio e torna indietro se il lavoro fallisce o lo annulli mentre è in coda.</p>
+      <p class="sub">Carica un documento e stampalo in studio. Il credito si scala all’invio e torna indietro se il lavoro fallisce o lo annulli mentre è in coda. Con una stampante via email, «inviata al cloud» significa che la mail è partita, non che il foglio è già uscito.</p>
       ${flash ? `<p class="ok" id="print-flash">${esc(flash)}</p>` : ''}
       <div class="print-grid">
         <section class="glass card">
@@ -126,8 +151,22 @@
     bindMember(data);
   }
 
+  function printerLabel(p) {
+    const where = p.location ? ' · ' + p.location : '';
+    if (p.connectionType === 'cloud') return p.name + where + ' · via email';
+    return p.name + where + ' · ' + (p.online ? 'in linea' : 'offline');
+  }
+
+  function cloudNote(p) {
+    const tone = p.supportsColor ? 'a colori' : 'in bianco e nero';
+    const sides = p.supportsDuplex ? 'fronte/retro' : 'solo fronte';
+    const fmt = (p.formats && p.formats[0]) || 'A4';
+    const who = p.cloudLabel || 'il servizio cloud';
+    return 'Questa stampante riceve il PDF per email (' + who + '). Colore, fronte/retro e formato non si scelgono qui: li applica il servizio con le sue impostazioni (in questo studio: ' + tone + ', ' + sides + ', ' + fmt + '). Le pagine che indichi sono già ritagliate nel file. Le copie vengono ripetute nello stesso PDF, perché l’email non accetta un comando «copie».';
+  }
+
   function formHtml(data) {
-    const opts = data.printers.map((p) => `<option value="${esc(p.id)}"${p.id === data.defaultPrinterId ? ' selected' : ''}>${esc(p.name)}${p.location ? ' · ' + esc(p.location) : ''} · ${p.online ? 'in linea' : 'offline'}</option>`).join('');
+    const opts = data.printers.map((p) => `<option value="${esc(p.id)}"${p.id === data.defaultPrinterId ? ' selected' : ''}>${esc(printerLabel(p))}</option>`).join('');
     return `<section class="glass card" id="print-form">
       <h2>Nuovo lavoro</h2>
       <label class="print-drop" id="print-drop"><input id="print-file" type="file" hidden accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.ppt,.pptx,application/pdf,image/png,image/jpeg,image/webp"><b>Trascina un PDF, un’immagine o un file Office</b><span>Massimo ${Math.round(data.settings.maxUploadBytes / (1024 * 1024))} MB · l’anteprima mostra le pagine</span></label>
@@ -142,6 +181,7 @@
         <div class="full"><label>Lati</label><div class="seg" id="print-duplex"><button type="button" data-duplex="0" class="on">Solo fronte</button><button type="button" data-duplex="1">Fronte/retro</button></div><p class="print-help">Il prezzo fronte/retro è per facciata.</p></div>
         <div><label>Formato</label><select id="print-format"></select></div>
         <div><label>Pagine</label><input id="print-range" placeholder="Tutte, oppure 1-3,5"></div>
+        <p class="print-help full" id="print-cloud-note" hidden></p>
       </div>
       <div class="sum"><div><div class="price" id="print-cost">—</div><p class="sub" id="print-cost-note">Scegli il file per vedere il costo.</p></div><button class="btn" id="print-go" disabled>Stampa</button></div>
       <p class="err" id="print-err"></p>
@@ -156,17 +196,39 @@
   function syncCaps(data) {
     const p = selectedPrinter(data);
     if (!p) return;
+    const cloud = p.connectionType === 'cloud';
+    const note = $('#print-cloud-note');
+    if (note) {
+      note.hidden = !cloud;
+      note.textContent = cloud ? cloudNote(p) : '';
+    }
+    const go = $('#print-go');
+    if (go) go.textContent = cloud ? 'Invia al cloud' : 'Stampa';
     const colorBtn = document.querySelector('#print-color [data-color="1"]');
+    const bwBtn = document.querySelector('#print-color [data-color="0"]');
     const dupBtn = document.querySelector('#print-duplex [data-duplex="1"]');
-    if (colorBtn) colorBtn.disabled = !p.supportsColor;
-    if (dupBtn) dupBtn.disabled = !p.supportsDuplex;
-    if (!p.supportsColor && colorOn) setColor(false);
-    if (!p.supportsDuplex && duplexOn) setDuplex(false);
+    const singleBtn = document.querySelector('#print-duplex [data-duplex="0"]');
+    if (cloud) {
+      if (bwBtn) bwBtn.disabled = true;
+      if (colorBtn) colorBtn.disabled = true;
+      if (dupBtn) dupBtn.disabled = true;
+      if (singleBtn) singleBtn.disabled = true;
+      setColor(!!p.supportsColor);
+      setDuplex(!!p.supportsDuplex);
+    } else {
+      if (bwBtn) bwBtn.disabled = false;
+      if (singleBtn) singleBtn.disabled = false;
+      if (colorBtn) colorBtn.disabled = !p.supportsColor;
+      if (dupBtn) dupBtn.disabled = !p.supportsDuplex;
+      if (!p.supportsColor && colorOn) setColor(false);
+      if (!p.supportsDuplex && duplexOn) setDuplex(false);
+    }
     const fmt = $('#print-format');
     if (!fmt) return;
     const prev = fmt.value;
     fmt.innerHTML = p.formats.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
     if (p.formats.includes(prev)) fmt.value = prev;
+    fmt.disabled = cloud;
   }
 
   function setColor(on) {
@@ -286,13 +348,15 @@
     const go = $('#print-go');
     const err = $('#print-err');
     go.disabled = true;
-    err.textContent = 'Invio in coda…';
+    const cloud = selectedPrinter(data) && selectedPrinter(data).connectionType === 'cloud';
+    err.textContent = cloud ? 'Invio al cloud…' : 'Invio in coda…';
     try {
       await apiJson('/api/print/jobs', { method: 'POST', body: optionsBody() });
       member();
     } catch (e) {
       err.textContent = e.message;
       go.disabled = false;
+      if (/rimborsato/.test(e.message)) member();
     }
   }
 
@@ -306,27 +370,105 @@
     const tokenLine = flags.tokenConfigured
       ? 'Il server accetta l’agente (PRINT_AGENT_TOKEN impostato).'
       : 'PRINT_AGENT_TOKEN non è impostato sul server: l’agente non può collegarsi. Aggiungi la variabile su Render e nel config del PC in studio.';
+    const cloud = flags.cloud || {};
+    const cloudLine = cloud.enabled
+      ? 'Stampa via email attiva' + (cloud.from ? ' (mittente ' + cloud.from + '). Aggiungi questo indirizzo ai mittenti autorizzati della stampante.' : '.')
+      : (cloud.reason || 'Stampa via email spenta.');
     if (!printers.length) {
       return `<section class="glass card print-guide"><p class="kick">Prima di collegare la stampante</p><h2 class="print-title">Nessuna stampante configurata</h2>
         <p>La stampante dello studio non è ancora installata. Puoi preparare listino, code e credito da qui e collegarla quando arriva, senza toccare il codice.</p>
         <ol>
           <li>Decidi i prezzi per pagina nel listino: bianco e nero, colore, fronte/retro.</li>
-          <li>Aggiungi una stampante con nome, posizione e protocollo (IPP, porta 9100 o coda CUPS). L’indirizzo IP può restare vuoto finché non lo conosci: lasciala disabilitata.</li>
+          <li>Aggiungi una stampante con nome e posizione. Il collegamento predefinito è l’agente locale: protocollo IPP, porta 9100 o coda CUPS. L’indirizzo IP può restare vuoto finché non lo conosci: lasciala disabilitata.</li>
           <li>Scegli un ID agente, per esempio <b>studio-1</b>. Lo stesso nome va nel config del PC accanto alla stampante.</li>
+          <li>In alternativa, se il server ha la stampa via email attiva, puoi scegliere «Cloud del produttore (email)» (Epson Connect, HP ePrint o un altro servizio). Quella stampante non passa dall’agente.</li>
           <li>Quando la stampante c’è, compila IP o URI, abilitala e rendila visibile. Puoi segnarne una come predefinita.</li>
           <li>Installa la cartella <b>print-agent</b> sul PC in LAN. Parla solo in uscita verso il sito: non serve aprire porte sul router. Le modifiche fatte qui arrivano al giro di polling successivo.</li>
           <li>Ricarica i membri da «Ricarica da banco».</li>
         </ol>
-        <p class="print-help">${esc(tokenLine)} ${esc(stripeLine)}</p>
+        <p class="print-help">${esc(tokenLine)} ${esc(stripeLine)} ${esc(cloudLine)}</p>
       </section>`;
     }
-    return `<section class="glass card print-guide"><p class="kick">Agente in studio</p><h2>Le stampanti si comandano da qui</h2>
-      <p>Nome, IP, protocollo, prezzi e ID agente arrivano al PC locale al prossimo controllo. Non serve reinstallare l’agente. Una stampante è «in linea» se l’agente si è fatto sentire negli ultimi 90 secondi.</p>
-      <p class="print-help">${esc(tokenLine)} ${esc(stripeLine)}</p>
+    return `<section class="glass card print-guide"><p class="kick">Come esce il foglio</p><h2>Agente locale oppure email del produttore</h2>
+      <p>Per l’agente: nome, IP, protocollo, prezzi e ID arrivano al PC locale al prossimo controllo. Non serve reinstallare l’agente. Una stampante è «in linea» se l’agente si è fatto sentire negli ultimi 90 secondi. Il cloud è un’altra strada: il sito spedisce il PDF da solo e l’agente non la vede.</p>
+      <p class="print-help">${esc(tokenLine)} ${esc(stripeLine)} ${esc(cloudLine)}</p>
     </section>`;
   }
 
   function centsField(cents) { return cents == null ? '' : (cents / 100).toFixed(2); }
+
+  function placeCell(p) {
+    if (p.connectionType === 'cloud') {
+      return esc(p.location || 'senza posizione') + ' · ' + esc(p.cloudLabel || 'cloud') + ' · ' + esc(p.cloudEmail || 'email da definire');
+    }
+    return esc(p.location || 'senza posizione') + ' · ' + esc(p.protocol) + ' · ' + esc(p.connection || 'indirizzo da definire');
+  }
+
+  function linkCell(p) {
+    if (p.connectionType === 'cloud') {
+      return '<span class="pill warn">email</span><br><small style="color:var(--g)">' + esc(p.cloudLabel || 'cloud') + '</small>';
+    }
+    return (p.online ? '<span class="pill">in linea</span>' : '<span class="pill off">offline</span>') + (p.agentId ? '<br><small style="color:var(--g)">' + esc(p.agentId) + '</small>' : '<br><small class="err">nessun agente</small>');
+  }
+
+  function selectedConnection() {
+    const on = document.querySelector('input[name="pf-conn"]:checked');
+    return on ? on.value : 'agent';
+  }
+
+  function syncPrinterKind() {
+    const cloudOn = selectedConnection() === 'cloud';
+    const agentBox = $('#pf-agent-fields');
+    const cloudBox = $('#pf-cloud-fields');
+    if (agentBox) agentBox.hidden = cloudOn;
+    if (cloudBox) cloudBox.hidden = !cloudOn;
+    const provider = $('#pf-provider') ? $('#pf-provider').value : 'epson';
+    const label = $('#pf-label-wrap');
+    if (label) label.hidden = !cloudOn || provider !== 'other';
+    const duplex = $('#pf-duplex');
+    if (duplex) {
+      const lock = cloudOn && provider === 'epson';
+      duplex.disabled = lock;
+      if (lock) duplex.checked = false;
+    }
+    const colorLabel = $('#pf-color-label');
+    const duplexLabel = $('#pf-duplex-label');
+    if (colorLabel) colorLabel.textContent = cloudOn ? 'Il cloud stampa a colori' : 'Stampa a colori';
+    if (duplexLabel) duplexLabel.textContent = cloudOn ? 'Il cloud stampa fronte/retro' : 'Fronte/retro';
+    const help = $('#pf-cap-help');
+    if (help) {
+      help.textContent = cloudOn
+        ? 'Queste caselle non sono scelte del membro. Descrivono come è impostato il servizio: il prezzo segue quelle impostazioni, perché colore, fronte/retro e carta non si comandano lavoro per lavoro.'
+        : 'Il membro può scegliere solo le opzioni spuntate.';
+    }
+    const foot = $('#pf-foot');
+    if (foot) {
+      const from = cloudCfg.from || 'l’indirizzo in SMTP_FROM';
+      if (!cloudOn) {
+        foot.textContent = 'Puoi salvare la stampante anche senza IP. Diventa selezionabile solo quando è abilitata, visibile e ha un indirizzo o una coda. L’agente con lo stesso ID la riceve da solo.';
+      } else if (!cloudCfg.enabled) {
+        foot.textContent = cloudCfg.reason || 'La stampa via email non è attiva su questo server.';
+      } else if (provider === 'epson') {
+        foot.textContent = 'Le mail partono da ' + from + '. Epson Connect Email Print stampa solo fronte e non accetta copie, colore o intervallo nella mail (allegati fino a circa 20 MB). Le pagine scelte sono già ritagliate e le copie vengono ripetute nello stesso PDF. Nel pannello Epson aggiungi ' + from + ' ai mittenti autorizzati e disattiva la stampa del corpo del messaggio, altrimenti può uscire un foglio in più. Il sito non riceve conferma: il lavoro resta «inviata al cloud» finché non lo segni stampato o non lo rimborsi.';
+      } else if (provider === 'hp') {
+        foot.textContent = 'Le mail partono da ' + from + '. HP ePrint usa le impostazioni dell’account (di solito una copia, colore, solo fronte; il fronte/retro, se c’è, si fissa nel portale e non per ogni lavoro) e la mail deve restare sotto circa 10 MB. Le copie le ripetiamo nel PDF. Aggiungi ' + from + ' ai mittenti consentiti. Nessuna conferma automatica: segna stampata o rimborsa.';
+      } else {
+        foot.textContent = 'Le mail partono da ' + from + '. Il servizio riceve un solo PDF. Colore, fronte/retro e carta restano quelli del produttore. Le copie le ripetiamo nel file e le pagine sono già ritagliate (limite prudenziale circa 6 MB). Se esiste una lista mittenti, aggiungi ' + from + '. Poi segna il lavoro stampato o rimborsalo.';
+      }
+    }
+    document.querySelectorAll('[data-fmt]').forEach((el) => {
+      el.onchange = () => {
+        if (selectedConnection() !== 'cloud' || !el.checked) return;
+        document.querySelectorAll('[data-fmt]').forEach((other) => { if (other !== el) other.checked = false; });
+      };
+    });
+    if (cloudOn) {
+      const checked = [...document.querySelectorAll('[data-fmt]')].filter((el) => el.checked);
+      if (checked.length !== 1) {
+        document.querySelectorAll('[data-fmt]').forEach((el) => { el.checked = el.dataset.fmt === 'A4'; });
+      }
+    }
+  }
 
   async function admin() {
     const my = ++gen;
@@ -360,16 +502,17 @@
     const chart = data.stats.series.some((d) => d.pages || d.jobs)
       ? `<div class="print-chart" role="img" aria-label="Pagine stampate negli ultimi 30 giorni">${data.stats.series.map((d) => `<i title="${esc(d.date)}: ${d.pages} pagine, ${euro(d.costCents)}" style="height:${Math.max(3, Math.round(d.pages / maxPages * 100))}%"></i>`).join('')}</div><div class="print-chart-labels"><span>${esc(data.stats.series[0].date.slice(5))}</span><span>oggi</span></div>`
       : '<p class="sub">Nessuna stampa completata negli ultimi 30 giorni.</p>';
+    cloudCfg = data.cloud || { enabled: false, from: '', reason: '' };
     const printerRows = data.printers.map((p) => `<tr>
-      <td><b>${esc(p.name)}</b>${p.isDefault ? ' · predefinita' : ''}<br><small style="color:var(--g)">${esc(p.location || 'senza posizione')} · ${esc(p.protocol)} · ${esc(p.connection || 'indirizzo da definire')}</small></td>
+      <td><b>${esc(p.name)}</b>${p.isDefault ? ' · predefinita' : ''}<br><small style="color:var(--g)">${placeCell(p)}</small></td>
       <td>${p.enabled ? 'abilitata' : 'disabilitata'}<br>${p.visible ? 'visibile' : 'nascosta'}</td>
-      <td>${p.online ? '<span class="pill">in linea</span>' : '<span class="pill off">offline</span>'}${p.agentId ? `<br><small style="color:var(--g)">${esc(p.agentId)}</small>` : '<br><small class="err">nessun agente</small>'}</td>
-      <td>${p.supportsColor ? 'colore' : 'solo b/n'} · ${p.supportsDuplex ? 'fronte/retro' : 'fronte'} · ${esc(p.formats.join(', '))}</td>
+      <td>${linkCell(p)}</td>
+      <td>${p.connectionType === 'cloud' ? 'default cloud · ' : ''}${p.supportsColor ? 'colore' : 'solo b/n'} · ${p.supportsDuplex ? 'fronte/retro' : 'fronte'} · ${esc(p.formats.join(', '))}</td>
       <td><button class="btn sm ghost" data-edit="${esc(p.id)}">Modifica</button> <button class="btn sm ghost" data-del="${esc(p.id)}">Elimina</button></td>
     </tr>`).join('') || '<tr><td colspan="5">Nessuna stampante. Usa il modulo qui sotto.</td></tr>';
     const userOpts = data.accounts.map((a) => `<option value="${a.id}">${esc(a.name)} · ${esc(a.email)} · ${euro(a.balanceCents)}</option>`).join('');
     const printerOpts = `<option value="">Tutte</option>` + data.printers.map((p) => `<option value="${esc(p.id)}"${filters.printerId === p.id ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
-    const statusOpts = ['', 'in coda', 'in stampa', 'completata', 'errore', 'rimborsata'].map((st) => `<option value="${esc(st)}"${filters.status === st ? ' selected' : ''}>${st || 'Tutti gli stati'}</option>`).join('');
+    const statusOpts = ['', 'in coda', 'in stampa', 'invio al cloud', 'inviata al cloud', 'completata', 'errore', 'rimborsata'].map((st) => `<option value="${esc(st)}"${filters.status === st ? ' selected' : ''}>${st || 'Tutti gli stati'}</option>`).join('');
     const csv = '/api/admin/print/jobs.csv?' + new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v))).toString();
     $('#m').innerHTML = `<div id="print-admin">
       <h1>Gestione stampe</h1>
@@ -402,20 +545,34 @@
         <button class="btn" id="pr-save">Salva listino</button> <span id="pr-msg" class="sub"></span>
       </section>
       <section class="glass card"><h2>Stampanti condivise</h2>
-        <div class="table-wrap"><table><tr><th>Stampante</th><th>Stato</th><th>Agente</th><th>Capacità</th><th></th></tr>${printerRows}</table></div>
+        <div class="table-wrap"><table><tr><th>Stampante</th><th>Stato</th><th>Collegamento</th><th>Capacità</th><th></th></tr>${printerRows}</table></div>
         <h2 id="pf-heading" style="margin-top:22px">${editing ? 'Modifica stampante' : 'Nuova stampante'}</h2>
         <div class="print-form" id="pf">
           <div><label>Nome</label><input id="pf-name" maxlength="80" placeholder="es. Reception"></div>
           <div><label>Dove si trova</label><input id="pf-loc" maxlength="120" placeholder="es. Bancone ingresso"></div>
-          <div><label>Protocollo</label><select id="pf-proto"><option value="ipp">IPP</option><option value="raw">Raw 9100</option><option value="cups">Coda CUPS</option></select></div>
-          <div><label>ID agente</label><input id="pf-agent" placeholder="studio-1" maxlength="80"></div>
-          <div><label>Host o IP</label><input id="pf-host" placeholder="lascia vuoto se non c’è ancora"></div>
-          <div><label>Porta</label><input id="pf-port" type="number" min="1" max="65535" placeholder="631 o 9100"></div>
-          <div class="full"><label>URI (opzionale, ha priorità su host e porta)</label><input id="pf-uri" placeholder="ipp://10.0.0.5/ipp/print"></div>
-          <div><label>Coda CUPS</label><input id="pf-queue" placeholder="solo se protocollo CUPS"></div>
+          <div class="full print-check" style="display:flex;gap:18px;flex-wrap:wrap">
+            <label class="print-check"><input type="radio" name="pf-conn" value="agent" checked> Agente locale</label>
+            <label class="print-check"><input type="radio" name="pf-conn" value="cloud" id="pf-conn-cloud"${cloudCfg.enabled ? '' : ' disabled'}> Cloud del produttore (email)</label>
+          </div>
+          <p class="print-help full" id="pf-cloud-why"${cloudCfg.enabled ? ' hidden' : ''}>${esc(cloudCfg.reason || 'La stampa via email è spenta finché non configuri il mittente e PRINT_CLOUD_ENABLED=1.')}</p>
+          <div id="pf-agent-fields" class="full print-form" style="display:contents">
+            <div><label>Protocollo</label><select id="pf-proto"><option value="ipp">IPP</option><option value="raw">Raw 9100</option><option value="cups">Coda CUPS</option></select></div>
+            <div><label>ID agente</label><input id="pf-agent" placeholder="studio-1" maxlength="80"></div>
+            <div><label>Host o IP</label><input id="pf-host" placeholder="lascia vuoto se non c’è ancora"></div>
+            <div><label>Porta</label><input id="pf-port" type="number" min="1" max="65535" placeholder="631 o 9100"></div>
+            <div class="full"><label>URI (opzionale, ha priorità su host e porta)</label><input id="pf-uri" placeholder="ipp://10.0.0.5/ipp/print"></div>
+            <div><label>Coda CUPS</label><input id="pf-queue" placeholder="solo se protocollo CUPS"></div>
+          </div>
+          <div id="pf-cloud-fields" class="full print-form" hidden>
+            <div><label>Servizio</label><select id="pf-provider"><option value="epson">Epson Connect</option><option value="hp">HP ePrint</option><option value="other">Altro</option></select></div>
+            <div id="pf-label-wrap" hidden><label>Nome del servizio</label><input id="pf-label" maxlength="80" placeholder="es. Brother Cloud"></div>
+            <div class="full"><label>Email della stampante</label><input id="pf-email" type="email" maxlength="200" placeholder="xxxx@print.epsonconnect.com"></div>
+            <div class="full"><label>Note (solo per lo staff)</label><textarea id="pf-notes" maxlength="500" placeholder="es. mittenti autorizzati già aggiornati, carta A4 nel cassetto"></textarea></div>
+          </div>
+          <p class="print-help full" id="pf-cap-help">Il membro può scegliere solo le opzioni spuntate.</p>
           <div class="print-check full" style="display:flex;gap:18px;flex-wrap:wrap">
-            <label class="print-check"><input id="pf-color" type="checkbox"> Stampa a colori</label>
-            <label class="print-check"><input id="pf-duplex" type="checkbox"> Fronte/retro</label>
+            <label class="print-check"><input id="pf-color" type="checkbox"> <span id="pf-color-label">Stampa a colori</span></label>
+            <label class="print-check"><input id="pf-duplex" type="checkbox"> <span id="pf-duplex-label">Fronte/retro</span></label>
             <label class="print-check"><input data-fmt="A4" type="checkbox" checked> A4</label>
             <label class="print-check"><input data-fmt="A3" type="checkbox"> A3</label>
           </div>
@@ -429,7 +586,7 @@
             <label class="print-check"><input id="pf-def" type="checkbox"> Predefinita</label>
           </div>
         </div>
-        <p class="print-help">Puoi salvare la stampante anche senza IP. Diventa selezionabile solo quando è abilitata, visibile e ha un indirizzo o una coda. L’agente con lo stesso ID la riceve da solo.</p>
+        <p class="print-help" id="pf-foot">Puoi salvare la stampante anche senza IP. Diventa selezionabile solo quando è abilitata, visibile e ha un indirizzo o una coda. L’agente con lo stesso ID la riceve da solo.</p>
         <div class="print-actions"><button class="btn" id="pf-save">Aggiungi stampante</button><button class="btn ghost" id="pf-reset" hidden>Annulla modifica</button><span id="pf-err" class="err"></span></div>
       </section>
       <section class="glass card"><h2>Lavori</h2>
@@ -441,6 +598,7 @@
           <div><label>Al</label><input id="f-to" type="date" value="${esc(filters.to)}"></div>
           <div class="print-actions"><button class="btn" id="f-go">Filtra</button><a class="btn ghost" href="${esc(csv)}">Esporta CSV</a></div>
         </div>
+        <p class="print-help">«inviata al cloud» vuol dire che la mail è partita. Il servizio non conferma la stampa: segna il lavoro stampato quando il foglio è uscito, oppure rimborsa. Non entra nel conteggio pagine finché non lo segni.</p>
         <div class="table-wrap"><table><tr><th>Quando</th><th>Utente</th><th>File</th><th>Stampante</th><th>Pagine</th><th>Costo</th><th>Stato</th><th></th></tr><tbody id="admin-jobs">${jobRows(jobs, true)}</tbody></table></div>
       </section>
       <div class="print-grid">
@@ -506,7 +664,24 @@
         catch (err) { alert(err.message); }
       };
     });
+    document.querySelectorAll('[data-printed]').forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm('Segnare questo lavoro come stampato? Il credito resta scalato.')) return;
+        try { await apiJson('/api/admin/print/jobs/' + b.dataset.printed + '/printed', { method: 'POST', body: {} }); admin(); }
+        catch (err) { alert(err.message); }
+      };
+    });
+    document.querySelectorAll('[data-resend]').forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm('Reinviare il PDF? Fallo solo se la mail precedente non è partita.')) return;
+        try { await apiJson('/api/admin/print/jobs/' + b.dataset.resend + '/resend', { method: 'POST', body: {} }); admin(); }
+        catch (err) { alert(err.message); }
+      };
+    });
+    document.querySelectorAll('input[name="pf-conn"]').forEach((el) => { el.onchange = syncPrinterKind; });
+    if ($('#pf-provider')) $('#pf-provider').onchange = syncPrinterKind;
     if (editing) startEdit(data.printers.find((p) => p.id === editing) || null);
+    else syncPrinterKind();
   }
 
   function startEdit(p) {
@@ -517,12 +692,18 @@
     $('#pf-reset').hidden = false;
     $('#pf-name').value = p.name;
     $('#pf-loc').value = p.location || '';
-    $('#pf-proto').value = p.protocol;
+    const cloud = p.connectionType === 'cloud';
+    document.querySelectorAll('input[name="pf-conn"]').forEach((el) => { el.checked = el.value === (cloud ? 'cloud' : 'agent'); });
+    if ($('#pf-proto') && ['ipp', 'raw', 'cups'].includes(p.protocol)) $('#pf-proto').value = p.protocol;
     $('#pf-agent').value = p.agentId || '';
     $('#pf-host').value = p.host || '';
     $('#pf-port').value = p.port == null ? '' : p.port;
     $('#pf-uri').value = p.uri || '';
     $('#pf-queue').value = p.queue || '';
+    if ($('#pf-email')) $('#pf-email').value = p.cloudEmail || '';
+    if ($('#pf-provider')) $('#pf-provider').value = p.cloudProvider || 'epson';
+    if ($('#pf-label')) $('#pf-label').value = p.cloudProvider === 'other' ? (p.cloudLabel || '') : '';
+    if ($('#pf-notes')) $('#pf-notes').value = p.cloudNotes || '';
     $('#pf-color').checked = !!p.supportsColor;
     $('#pf-duplex').checked = !!p.supportsDuplex;
     document.querySelectorAll('[data-fmt]').forEach((el) => { el.checked = p.formats.includes(el.dataset.fmt); });
@@ -533,19 +714,26 @@
     $('#pf-on').checked = !!p.enabled;
     $('#pf-vis').checked = !!p.visible;
     $('#pf-def').checked = !!p.isDefault;
+    syncPrinterKind();
     $('#pf').scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function printerBody() {
+    const cloud = selectedConnection() === 'cloud';
     return {
       name: $('#pf-name').value,
       location: $('#pf-loc').value,
+      connectionType: cloud ? 'cloud' : 'agent',
       protocol: $('#pf-proto').value,
       agentId: $('#pf-agent').value,
       host: $('#pf-host').value,
       port: $('#pf-port').value,
       uri: $('#pf-uri').value,
       queue: $('#pf-queue').value,
+      cloudEmail: $('#pf-email') ? $('#pf-email').value : '',
+      cloudProvider: $('#pf-provider') ? $('#pf-provider').value : '',
+      cloudLabel: $('#pf-label') ? $('#pf-label').value : '',
+      cloudNotes: $('#pf-notes') ? $('#pf-notes').value : '',
       supportsColor: $('#pf-color').checked,
       supportsDuplex: $('#pf-duplex').checked,
       formats: [...document.querySelectorAll('[data-fmt]')].filter((el) => el.checked).map((el) => el.dataset.fmt),
