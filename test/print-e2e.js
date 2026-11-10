@@ -363,6 +363,12 @@ async function main() {
     assert.strictEqual(overview.json.stripe.enabled, false);
     assert.ok(overview.json.stats.series.length === 30);
     assert.ok(overview.json.stats.month.pages >= 4);
+    assert.strictEqual(typeof overview.json.stats.pending, 'number');
+    assert.strictEqual(typeof overview.json.stats.today.jobs, 'number');
+    const act = overview.json.stats.byPrinter.find((p) => p.printerId === printerId);
+    assert.ok(act, 'missing per-printer activity');
+    assert.ok(act.pagesMonth >= 4);
+    assert.strictEqual(act.pending, 0);
     const online = overview.json.printers.find((p) => p.id === printerId);
     assert.strictEqual(online.online, true);
 
