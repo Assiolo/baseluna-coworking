@@ -29,7 +29,32 @@ Ogni membro ha la voce **Stampa**: carica un PDF (o un’immagine; i file Office
 
 Le stampanti non sono nel codice. In **Admin → Gestione stampe** si aggiungono una o più code (nome, posizione, IPP / raw 9100 / coda CUPS, IP o URI, colore, fronte/retro, A4/A3, prezzi propri, ID dell’agente che le serve). Si abilitano e si rendono visibili quando l’indirizzo c’è. Senza stampanti il membro vede «Nessuna stampante disponibile».
 
-L’agente in `print-agent/` sta sul PC in LAN, parla solo in HTTPS in uscita e riceve l’elenco stampanti dal sito. Vedi `print-agent/README.md`. Per provare senza hardware: `backend: "file"` (scrive PDF e opzioni in una cartella).
+L’agente in `print-agent/` sta sul PC in LAN, parla solo in HTTPS in uscita e riceve l’elenco stampanti dal sito. Vedi `print-agent/README.md`. Per provare senza hardware: `backend: "file"` (scrive PDF e opzioni in una cartella). Le stampanti «Agente locale» non cambiano: l’agente non vede e non stampa quelle impostate come email del produttore.
+
+### Stampa via email del produttore
+
+Opzionale e spenta di default. In **Gestione stampe**, nel modulo della stampante, il collegamento può essere **Agente locale** (il comportamento di oggi) oppure **Cloud del produttore (email)**. La seconda voce resta grigia, con la spiegazione, finché sul server non ci sono il flag e un mittente. Le stampanti già presenti restano «Agente locale».
+
+Serve per servizi che stampano un PDF ricevuto per email, per esempio Epson Connect Email Print (`nome@print.epsonconnect.com`) o HP ePrint (`nome@hpeprint.com`). Il sito manda lui la mail con il PDF già preparato. Non passa dalla coda dell’agente.
+
+Sul servizio web di Render, per accenderla:
+
+- `PRINT_CLOUD_ENABLED=1`
+- mittente SMTP: `SMTP_HOST`, `SMTP_PORT` (se manca, 587), `SMTP_FROM` (indirizzo, oppure `Nome <indirizzo>`). Se il server chiede login: `SMTP_USER` e `SMTP_PASS`. `SMTP_SECURE` vale `starttls` (default sulla 587), `tls` (default sulla 465) o `plain` (solo un relay locale, senza cifratura).
+- in alternativa, senza `SMTP_HOST`: `RESEND_API_KEY` e `SMTP_FROM` (dominio verificato su Resend). Se `SMTP_HOST` c’è, si usa SMTP e Resend no.
+
+`SMTP_FROM` è l’indirizzo da aggiungere alla lista dei mittenti autorizzati della stampante. Epson Connect, con la lista attiva, scarta le mail di chi non è in elenco; HP ePrint ha lo stesso tipo di lista. Nel pannello Epson conviene anche spegnere la stampa del corpo del messaggio, altrimenti può uscire un foglio in più oltre al PDF. L’oggetto della mail è «Stampa» (HP ePrint rifiuta l’oggetto vuoto) e il destinatario è solo l’indirizzo della stampante.
+
+Cosa il cloud non comanda, e cosa fa il sito al posto suo:
+
+- Intervallo pagine: il sito ritaglia il PDF prima di allegarlo. Questo funziona.
+- Copie: né Epson né HP accettano un comando «copie» nella mail. Il sito ripete le pagine nello stesso PDF, una volta per copia, e manda un solo allegato. Due copie di un foglio sono due pagine una dopo l’altra.
+- Colore, fronte/retro e formato: li decide il servizio, non il singolo lavoro. In Gestione stampe si registra com’è impostata la stampante (serve solo per il prezzo e per la scritta che vede il membro). Sulla pagina Stampa quelle scelte sono bloccate, con la spiegazione. Epson Connect Email Print stampa solo fronte: il fronte/retro non si può attivare. HP ePrint di solito esce a colori, una copia, solo fronte; su alcuni modelli il fronte/retro si fissa nell’account HP, non nella mail.
+- Dimensione: Epson accetta allegati fino a circa 20 MB, HP una mail sotto circa 10 MB. Il PDF inviato è limitato a circa 15 MB per Epson e circa 6 MB per HP e per gli altri servizi, così dopo la codifica dell’email si resta sotto la soglia. Se le copie lo fanno sforare, il lavoro non parte e il credito non si scala.
+
+Esito. Se il server di posta rifiuta la mail, il lavoro va in **rimborsata** e il credito torna indietro (il saldo non va sotto zero). Se la mail è accettata, lo stato è **inviata al cloud**, non «completata»: il servizio non dice al sito se il foglio è uscito. Il membro e l’admin vedono quella scritta. L’admin può **Segna stampata** (allora conta come completata) oppure **Rimborsa**. Se il processo si interrompe dopo l’addebito e prima della risposta del server, lo stato resta **invio al cloud**: da lì si può reinviare, segnare stampata o rimborsare.
+
+Conferme che non leggiamo. Epson Connect può mandare una mail di notifica al mittente, se nella lista dei mittenti autorizzati spunti l’avviso per `SMTP_FROM`: arriva nella casella di quel mittente, non al sito. HP mostra lo storico nel portale HP Smart / HP Connected. I testi cambiano e non c’è un webhook stabile, quindi non c’è un lettore di risposte. La conferma la dà lo staff dal pannello.
 
 Variabili:
 

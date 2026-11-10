@@ -4,6 +4,8 @@ Programma da tenere acceso sul PC, sul Mac o sul Raspberry Pi che sta nella stes
 
 La stampante **non è ancora installata** e non c’è nessun modello o IP nel codice. Nome, protocollo, indirizzo e capacità si impostano dal pannello **Gestione stampe**. L’agente li riceve a ogni giro. Cambi un IP dal sito e al controllo successivo vale quello nuovo, senza reinstallare.
 
+Questo programma serve solo le stampanti con collegamento **Agente locale**. Se nel pannello ne crei una **Cloud del produttore (email)** (Epson Connect, HP ePrint o un altro servizio a cui si manda il PDF per posta), il sito spedisce la mail da solo. Quella stampante non compare qui, non viene scaricata e non viene stampata da `lp` o dalla porta 9100. Le stampanti già presenti restano agente locale e si comportano come prima. Come si accende il cloud, quali variabili servono su Render e che cosa l’email non può comandare (copie, colore, fronte/retro) è nel README del sito, sezione «Stampa via email del produttore». In breve: il cloud è spento finché non imposti `PRINT_CLOUD_ENABLED=1` e un mittente (`SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, e `SMTP_USER` / `SMTP_PASS` se servono, oppure `RESEND_API_KEY` e `SMTP_FROM`). L’indirizzo del mittente va aggiunto ai mittenti autorizzati della stampante. Lo stato dopo l’invio è «inviata al cloud», non «completata»: Epson può avvisare la casella del mittente e HP tiene lo storico nel proprio portale, ma questo agente e il sito non leggono quelle risposte.
+
 Finché non c’è una stampante vera, lascia il backend `file`: i lavori finiscono in una cartella, utili per la prova.
 
 ## Cosa ti serve
@@ -141,3 +143,5 @@ node agent.js
 - Credito: si scala all’invio. Errore, annullamento in coda o zero pagine stampate rimborsano da soli. Il saldo non va sotto zero.
 
 La postazione di rilascio (release station, «stampa solo quando sono davanti alla macchina») non è inclusa.
+
+La stampa via email del produttore non passa da qui. Se un lavoro resta «in coda» su una stampante agente, è questo programma che deve essere acceso. Se lo stato è «inviata al cloud» o «invio al cloud», la mail l’ha gestita il sito: riavviare l’agente non la ristampa e non la conferma. Dal pannello si segna stampata, si reinvia solo un invio interrotto, oppure si rimborsa.

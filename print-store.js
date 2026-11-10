@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const db = require('./db');
 const logic = require('./lib/print-logic');
 const files = require('./lib/print-files');
+const mail = require('./lib/print-mail');
 
 const { fail } = logic;
 
@@ -50,10 +51,20 @@ async function ensureSchema(client) {
       is_default BOOLEAN NOT NULL DEFAULT FALSE,
       last_heartbeat TIMESTAMPTZ,
       status_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      connection_type TEXT NOT NULL DEFAULT 'agent',
+      cloud_email TEXT NOT NULL DEFAULT '',
+      cloud_provider TEXT NOT NULL DEFAULT '',
+      cloud_label TEXT NOT NULL DEFAULT '',
+      cloud_notes TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await client.query(`ALTER TABLE printers ADD COLUMN IF NOT EXISTS connection_type TEXT NOT NULL DEFAULT 'agent'`);
+  await client.query(`ALTER TABLE printers ADD COLUMN IF NOT EXISTS cloud_email TEXT NOT NULL DEFAULT ''`);
+  await client.query(`ALTER TABLE printers ADD COLUMN IF NOT EXISTS cloud_provider TEXT NOT NULL DEFAULT ''`);
+  await client.query(`ALTER TABLE printers ADD COLUMN IF NOT EXISTS cloud_label TEXT NOT NULL DEFAULT ''`);
+  await client.query(`ALTER TABLE printers ADD COLUMN IF NOT EXISTS cloud_notes TEXT NOT NULL DEFAULT ''`);
   await client.query('CREATE INDEX IF NOT EXISTS printers_agent_idx ON printers (agent_id)');
   await client.query(`
     CREATE TABLE IF NOT EXISTS print_uploads (
@@ -90,11 +101,15 @@ async function ensureSchema(client) {
       status TEXT NOT NULL,
       error TEXT NOT NULL DEFAULT '',
       claimed_by TEXT NOT NULL DEFAULT '',
+      delivery TEXT NOT NULL DEFAULT 'agent',
+      cloud_ref TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       finished_at TIMESTAMPTZ
     )
   `);
+  await client.query(`ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS delivery TEXT NOT NULL DEFAULT 'agent'`);
+  await client.query(`ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS cloud_ref TEXT NOT NULL DEFAULT ''`);
   await client.query('CREATE INDEX IF NOT EXISTS print_jobs_user_idx ON print_jobs (user_id, created_at DESC)');
   await client.query('CREATE INDEX IF NOT EXISTS print_jobs_status_idx ON print_jobs (status, created_at)');
   await client.query('CREATE INDEX IF NOT EXISTS print_jobs_printer_idx ON print_jobs (printer_id)');
@@ -171,6 +186,11 @@ function mapPrinter(r) {
     duplexBwCents: num(r.duplex_bw_cents),
     duplexColorCents: num(r.duplex_color_cents),
     agentId: r.agent_id || '',
+    connectionType: r.connection_type === 'cloud' ? 'cloud' : 'agent',
+    cloudEmail: r.cloud_email || '',
+    cloudProvider: r.cloud_provider || '',
+    cloudLabel: r.cloud_label || '',
+    cloudNotes: r.cloud_notes || '',
     enabled: !!r.enabled,
     visible: !!r.visible,
     isDefault: !!r.is_default,
@@ -181,13 +201,16 @@ function mapPrinter(r) {
 }
 
 function presentPrinter(p, settings, { admin }) {
-  const online = logic.isOnline(p.lastHeartbeat);
-  const connection = logic.buildConnectionUri(p);
+  const cloud = logic.isCloud(p);
+  const online = cloud ? false : logic.isOnline(p.lastHeartbeat);
+  const connection = cloud ? '' : logic.buildConnectionUri(p);
   const base = {
     id: p.id,
     name: p.name,
     location: p.location,
     protocol: p.protocol,
+    connectionType: cloud ? 'cloud' : 'agent',
+    cloudLabel: p.cloudLabel || '',
     supportsColor: p.supportsColor,
     supportsDuplex: p.supportsDuplex,
     formats: p.formats,
@@ -195,7 +218,7 @@ function presentPrinter(p, settings, { admin }) {
     visible: p.visible,
     isDefault: p.isDefault,
     online,
-    lastHeartbeat: p.lastHeartbeat,
+    lastHeartbeat: cloud ? null : p.lastHeartbeat,
     connection,
     targetReady: logic.targetReady(p),
     prices: {
@@ -213,6 +236,10 @@ function presentPrinter(p, settings, { admin }) {
     queue: p.queue,
     uri: p.uri,
     agentId: p.agentId,
+    cloudEmail: p.cloudEmail || '',
+    cloudProvider: p.cloudProvider || '',
+    cloudNotes: p.cloudNotes || '',
+    connection: cloud ? (p.cloudEmail || '') : connection,
     overrides: {
       bwCents: p.bwCents,
       colorCents: p.colorCents,
@@ -227,7 +254,7 @@ const JOB_COLS = `
   j.id, j.user_id, j.printer_id, j.filename, j.page_count, j.page_range, j.pages_selected,
   j.copies, j.color, j.duplex, j.format, j.unit_cents, j.pages_charged, j.pages_printed,
   j.cost_cents, j.actual_cost_cents, j.refunded_cents, j.unbilled_cents, j.status, j.error,
-  j.claimed_by, j.created_at, j.updated_at, j.finished_at
+  j.claimed_by, j.delivery, j.cloud_ref, j.created_at, j.updated_at, j.finished_at
 `;
 
 function mapJob(r, { admin }) {
@@ -254,6 +281,7 @@ function mapJob(r, { admin }) {
     unbilledCents: r.unbilled_cents,
     status: r.status,
     error: r.error || '',
+    delivery: r.delivery === 'cloud' ? 'cloud' : 'agent',
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     finishedAt: r.finished_at,
@@ -262,6 +290,7 @@ function mapJob(r, { admin }) {
     job.userName = r.user_name || '';
     job.userEmail = r.user_email || '';
     job.claimedBy = r.claimed_by || '';
+    job.cloudRef = r.cloud_ref || '';
   }
   return job;
 }
@@ -341,7 +370,7 @@ async function monthPages(client, userId) {
     `SELECT COALESCE(SUM(pages_charged), 0)::int AS n
      FROM print_jobs
      WHERE user_id = $1
-       AND status IN ('in coda', 'in stampa', 'completata')
+       AND status IN ('in coda', 'in stampa', 'invio al cloud', 'inviata al cloud', 'completata')
        AND (created_at AT TIME ZONE 'Europe/Rome') >= date_trunc('month', NOW() AT TIME ZONE 'Europe/Rome')`,
     [userId]
   );
@@ -397,18 +426,35 @@ async function getPrinter(id) {
   return mapPrinter(rows[0]);
 }
 
+function assertCloudWritable(row, { creating }) {
+  if (row.connection_type !== 'cloud') return;
+  const cfg = mail.describe();
+  if (cfg.enabled) return;
+  if (!creating && !row.enabled && !row.visible && !row.is_default) return;
+  throw fail(400, cfg.reason || 'Stampa via email non attiva');
+}
+
+function usableByMember(printer) {
+  if (!logic.memberCanUse(printer)) return false;
+  if (logic.isCloud(printer) && !mail.describe().enabled) return false;
+  return true;
+}
+
 async function createPrinter(input) {
   const row = logic.validatePrinter(input);
+  assertCloudWritable(row, { creating: true });
   const id = crypto.randomUUID();
   await withTx(async (client) => {
     if (row.is_default) await client.query('UPDATE printers SET is_default = FALSE WHERE is_default');
     await client.query(
       `INSERT INTO printers (
         id, name, location, protocol, uri, host, port, queue, supports_color, supports_duplex, formats,
-        bw_cents, color_cents, duplex_bw_cents, duplex_color_cents, agent_id, enabled, visible, is_default
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+        bw_cents, color_cents, duplex_bw_cents, duplex_color_cents, agent_id, enabled, visible, is_default,
+        connection_type, cloud_email, cloud_provider, cloud_label, cloud_notes
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
       [id, row.name, row.location, row.protocol, row.uri, row.host, row.port, row.queue, row.supports_color, row.supports_duplex, row.formats,
-        row.bw_cents, row.color_cents, row.duplex_bw_cents, row.duplex_color_cents, row.agent_id, row.enabled, row.visible, row.is_default]
+        row.bw_cents, row.color_cents, row.duplex_bw_cents, row.duplex_color_cents, row.agent_id, row.enabled, row.visible, row.is_default,
+        row.connection_type, row.cloud_email, row.cloud_provider, row.cloud_label, row.cloud_notes]
     );
   });
   return getPrinter(id);
@@ -429,6 +475,11 @@ async function updatePrinter(id, input) {
     supportsDuplex: input.supportsDuplex != null ? input.supportsDuplex : existing.supportsDuplex,
     formats: input.formats != null ? input.formats : existing.formats,
     agentId: input.agentId != null ? input.agentId : existing.agentId,
+    connectionType: input.connectionType != null ? input.connectionType : existing.connectionType,
+    cloudEmail: input.cloudEmail != null ? input.cloudEmail : existing.cloudEmail,
+    cloudProvider: input.cloudProvider != null ? input.cloudProvider : existing.cloudProvider,
+    cloudLabel: input.cloudLabel != null ? input.cloudLabel : existing.cloudLabel,
+    cloudNotes: input.cloudNotes != null ? input.cloudNotes : existing.cloudNotes,
     enabled: input.enabled != null ? input.enabled : existing.enabled,
     visible: input.visible != null ? input.visible : existing.visible,
     isDefault: input.isDefault != null ? input.isDefault : existing.isDefault,
@@ -438,6 +489,7 @@ async function updatePrinter(id, input) {
     priceDuplexColor: input.priceDuplexColor !== undefined ? input.priceDuplexColor : (existing.duplexColorCents == null ? '' : existing.duplexColorCents / 100),
   };
   const row = logic.validatePrinter(merged);
+  assertCloudWritable(row, { creating: false });
   await withTx(async (client) => {
     if (row.is_default) await client.query('UPDATE printers SET is_default = FALSE WHERE id <> $1', [id]);
     const upd = await client.query(
@@ -445,10 +497,13 @@ async function updatePrinter(id, input) {
         name=$2, location=$3, protocol=$4, uri=$5, host=$6, port=$7, queue=$8,
         supports_color=$9, supports_duplex=$10, formats=$11,
         bw_cents=$12, color_cents=$13, duplex_bw_cents=$14, duplex_color_cents=$15,
-        agent_id=$16, enabled=$17, visible=$18, is_default=$19, updated_at=NOW()
+        agent_id=$16, enabled=$17, visible=$18, is_default=$19,
+        connection_type=$20, cloud_email=$21, cloud_provider=$22, cloud_label=$23, cloud_notes=$24,
+        updated_at=NOW()
        WHERE id=$1`,
       [id, row.name, row.location, row.protocol, row.uri, row.host, row.port, row.queue, row.supports_color, row.supports_duplex, row.formats,
-        row.bw_cents, row.color_cents, row.duplex_bw_cents, row.duplex_color_cents, row.agent_id, row.enabled, row.visible, row.is_default]
+        row.bw_cents, row.color_cents, row.duplex_bw_cents, row.duplex_color_cents, row.agent_id, row.enabled, row.visible, row.is_default,
+        row.connection_type, row.cloud_email, row.cloud_provider, row.cloud_label, row.cloud_notes]
     );
     if (!upd.rowCount) throw fail(404, 'Stampante non trovata');
   });
@@ -504,7 +559,7 @@ async function quoteJob({ userId, uploadId, printerId, copies, color, duplex, fo
   if (!upload) throw fail(404, 'File non trovato o scaduto. Ricaricalo.');
   const settings = await getSettings();
   const printer = await getPrinter(printerId);
-  if (!logic.memberCanUse(printer)) throw fail(400, 'Stampante non disponibile');
+  if (!usableByMember(printer)) throw fail(400, 'Stampante non disponibile');
   const opt = logic.validateOptions({
     copies, color, duplex, format, pageRange, pageCount: upload.page_count, printer, settings,
   });
@@ -529,11 +584,13 @@ async function quoteJob({ userId, uploadId, printerId, copies, color, duplex, fo
     balanceCents,
     enough: balanceCents >= opt.costCents,
     quota: { limit, used, remaining: limit == null ? null : Math.max(0, limit - used) },
+    delivery: logic.isCloud(printer) ? 'cloud' : 'agent',
+    cloudLabel: printer.cloudLabel || '',
   };
 }
 
 async function submitJob({ userId, uploadId, printerId, copies, color, duplex, format, pageRange }) {
-  return withTx(async (client) => {
+  const prepared = await withTx(async (client) => {
     await lockUser(client, userId);
     const up = await client.query(
       'SELECT * FROM print_uploads WHERE id = $1 AND user_id = $2 FOR UPDATE',
@@ -544,7 +601,7 @@ async function submitJob({ userId, uploadId, printerId, copies, color, duplex, f
     const settings = await settingsOf(client);
     const pr = await client.query('SELECT * FROM printers WHERE id = $1 FOR UPDATE', [printerId]);
     const printer = mapPrinter(pr.rows[0]);
-    if (!logic.memberCanUse(printer)) throw fail(400, 'Stampante non disponibile');
+    if (!usableByMember(printer)) throw fail(400, 'Stampante non disponibile');
     const opt = logic.validateOptions({
       copies, color, duplex, format, pageRange,
       pageCount: upload.page_count,
@@ -566,18 +623,28 @@ async function submitJob({ userId, uploadId, printerId, copies, color, duplex, f
     let pdf;
     try {
       pdf = await files.slicePdf(upload.bytes, opt.pages);
+      if (logic.isCloud(printer)) pdf = await files.repeatPdf(pdf, opt.copies);
     } catch (err) {
       if (err.expose) throw err;
       throw fail(400, 'PDF non leggibile');
     }
+    const cloud = logic.isCloud(printer);
+    if (cloud) {
+      const limit = logic.cloudMaxBytes(printer.cloudProvider);
+      if (pdf.length > limit) {
+        const mb = Math.max(1, Math.round(limit / (1024 * 1024)));
+        throw fail(400, 'Il PDF con le copie supera il limite di questo servizio (circa ' + mb + ' MB). Riduci pagine o copie.');
+      }
+    }
     const id = crypto.randomUUID();
+    const status = cloud ? 'invio al cloud' : 'in coda';
     await client.query(
       `INSERT INTO print_jobs (
         id, user_id, printer_id, filename, bytes, page_count, page_range, pages_selected, copies,
-        color, duplex, format, unit_cents, pages_charged, cost_cents, status
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'in coda')`,
+        color, duplex, format, unit_cents, pages_charged, cost_cents, status, delivery
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [id, userId, printer.id, upload.filename, pdf, upload.page_count, opt.pageRange, opt.pages.length, opt.copies,
-        opt.color, opt.duplex, opt.format, opt.unitCents, opt.impressions, opt.costCents]
+        opt.color, opt.duplex, opt.format, opt.unitCents, opt.impressions, opt.costCents, status, cloud ? 'cloud' : 'agent']
     );
     if (opt.costCents > 0) {
       await addLedger(client, {
@@ -591,8 +658,39 @@ async function submitJob({ userId, uploadId, printerId, copies, color, duplex, f
     await client.query('DELETE FROM print_uploads WHERE id = $1', [upload.id]);
     const job = await jobById(client, id, { admin: false });
     const balanceCents = await balanceTx(client, userId);
-    return { job, balanceCents };
+    return {
+      job,
+      balanceCents,
+      cloud: cloud ? { to: printer.cloudEmail, filename: upload.filename, pdf } : null,
+    };
   });
+  if (!prepared.cloud) return { job: prepared.job, balanceCents: prepared.balanceCents };
+  return deliverCloud(prepared);
+}
+
+async function deliverCloud(prepared) {
+  let sent;
+  try {
+    sent = await mail.sendPdf({
+      to: prepared.cloud.to,
+      filename: prepared.cloud.filename,
+      pdf: prepared.cloud.pdf,
+    });
+  } catch (err) {
+    const why = (err && err.expose && err.message) ? err.message : 'Invio email non riuscito';
+    try { await failCloudSend(prepared.job.id, why); } catch (refundErr) {
+      console.error('rimborso cloud non riuscito:', refundErr.message);
+    }
+    throw fail(502, why + ' Il credito è stato rimborsato.');
+  }
+  try {
+    const job = await markCloudSent(prepared.job.id, sent.messageId);
+    return { job, balanceCents: prepared.balanceCents };
+  } catch (err) {
+    console.error('aggiornamento stato cloud non riuscito:', err.message);
+    const job = await jobById(null, prepared.job.id, { admin: false });
+    return { job: job || prepared.job, balanceCents: prepared.balanceCents };
+  }
 }
 
 async function jobById(client, id, { admin, withBytes }) {
@@ -696,6 +794,9 @@ async function cancelJob(id, userId) {
     const job = await jobById(client, id, { admin: false });
     if (!job || job.userId !== userId) throw fail(404, 'Lavoro non trovato');
     if (job.status === 'rimborsata') return jobById(client, id, { admin: false });
+    if (job.status === 'invio al cloud' || job.status === 'inviata al cloud') {
+      throw fail(409, 'Il file è già in invio al servizio cloud. Chiedi allo staff un rimborso se serve.');
+    }
     if (job.status !== 'in coda') {
       throw fail(409, 'La stampa è già partita: chiedi allo staff un rimborso se serve.');
     }
@@ -934,11 +1035,11 @@ async function stats() {
     WHERE (created_at AT TIME ZONE 'Europe/Rome') >= date_trunc('day', NOW() AT TIME ZONE 'Europe/Rome')
   `);
   const pending = await db.getPool().query(`
-    SELECT COUNT(*)::int AS n FROM print_jobs WHERE status IN ('in coda', 'in stampa')
+    SELECT COUNT(*)::int AS n FROM print_jobs WHERE status IN ('in coda', 'in stampa', 'invio al cloud', 'inviata al cloud')
   `);
   const perPrinter = await db.getPool().query(`
     SELECT printer_id,
-      COUNT(*) FILTER (WHERE status IN ('in coda', 'in stampa'))::int AS pending,
+      COUNT(*) FILTER (WHERE status IN ('in coda', 'in stampa', 'invio al cloud', 'inviata al cloud'))::int AS pending,
       COUNT(*) FILTER (
         WHERE status = 'completata'
           AND (created_at AT TIME ZONE 'Europe/Rome') >= date_trunc('day', NOW() AT TIME ZONE 'Europe/Rome')
@@ -1002,6 +1103,8 @@ async function pullJobs(agentId) {
      FROM print_jobs j
      JOIN printers p ON p.id = j.printer_id
      WHERE j.status = 'in coda' AND p.enabled = TRUE AND p.agent_id = $1
+       AND COALESCE(p.connection_type, 'agent') = 'agent'
+       AND COALESCE(j.delivery, 'agent') = 'agent'
      ORDER BY j.created_at
      LIMIT 5`,
     [agentId]
@@ -1016,6 +1119,8 @@ async function claimJob(id, agentId) {
      FROM printers p
      WHERE j.id = $1 AND j.printer_id = p.id AND j.status = 'in coda'
        AND p.enabled = TRUE AND p.agent_id = $2
+       AND COALESCE(p.connection_type, 'agent') = 'agent'
+       AND COALESCE(j.delivery, 'agent') = 'agent'
      RETURNING j.id`,
     [id, agentId]
   );
@@ -1029,6 +1134,8 @@ async function jobFileForAgent(id, agentId) {
      FROM print_jobs j
      JOIN printers p ON p.id = j.printer_id
      WHERE j.id = $1 AND p.agent_id = $2
+       AND COALESCE(p.connection_type, 'agent') = 'agent'
+       AND COALESCE(j.delivery, 'agent') = 'agent'
        AND (j.status = 'in coda' OR (j.status = 'in stampa' AND j.claimed_by = $2))`,
     [id, agentId]
   );
@@ -1053,6 +1160,7 @@ async function applyAgentResult({ id, agentId, status, pagesPrinted, error }) {
     await lockUser(client, userId);
     await client.query('SELECT id FROM print_jobs WHERE id = $1 FOR UPDATE', [id]);
     const job = await jobById(client, id, { admin: false });
+    if (job.delivery === 'cloud') throw fail(403, 'Lavoro gestito dal cloud, non dall\'agente');
     if (job.status === 'completata' || job.status === 'rimborsata') return job;
     if (status === 'in stampa') {
       await client.query(
@@ -1125,7 +1233,7 @@ async function applyAgentResult({ id, agentId, status, pagesPrinted, error }) {
 async function heartbeat(agentId, reports) {
   await db.getPool().query(
     `UPDATE printers SET last_heartbeat = NOW(), updated_at = NOW()
-     WHERE agent_id = $1 AND enabled = TRUE`,
+     WHERE agent_id = $1 AND enabled = TRUE AND COALESCE(connection_type, 'agent') = 'agent'`,
     [agentId]
   );
   const list = Array.isArray(reports) ? reports.slice(0, 30) : [];
@@ -1142,20 +1250,111 @@ async function heartbeat(agentId, reports) {
     };
     await db.getPool().query(
       `UPDATE printers SET status_json = $2::jsonb, last_heartbeat = NOW(), updated_at = NOW()
-       WHERE id = $1 AND agent_id = $3`,
+       WHERE id = $1 AND agent_id = $3 AND COALESCE(connection_type, 'agent') = 'agent'`,
       [report.id, JSON.stringify(payload), agentId]
     );
   }
-  const { rows } = await db.getPool().query('SELECT * FROM printers WHERE agent_id = $1 ORDER BY name', [agentId]);
+  const { rows } = await db.getPool().query(
+    `SELECT * FROM printers WHERE agent_id = $1 AND COALESCE(connection_type, 'agent') = 'agent' ORDER BY name`,
+    [agentId]
+  );
   return rows.map(mapPrinter);
 }
 
 async function printersForAgent(agentId) {
   const { rows } = await db.getPool().query(
-    'SELECT * FROM printers WHERE agent_id = $1 ORDER BY name',
+    `SELECT * FROM printers WHERE agent_id = $1 AND COALESCE(connection_type, 'agent') = 'agent' ORDER BY name`,
     [agentId]
   );
   return rows.map(mapPrinter);
+}
+
+async function markCloudSent(id, cloudRef) {
+  await db.getPool().query(
+    `UPDATE print_jobs
+     SET status = 'inviata al cloud', cloud_ref = $2, error = '', updated_at = NOW()
+     WHERE id = $1 AND status = 'invio al cloud'`,
+    [id, String(cloudRef || '').slice(0, 200)]
+  );
+  return jobById(null, id, { admin: false });
+}
+
+async function failCloudSend(id, errorText) {
+  return withTx(async (client) => {
+    const peek = await client.query('SELECT user_id, status FROM print_jobs WHERE id = $1', [id]);
+    if (!peek.rowCount) return null;
+    const userId = Number(peek.rows[0].user_id);
+    await lockUser(client, userId);
+    await client.query('SELECT id FROM print_jobs WHERE id = $1 FOR UPDATE', [id]);
+    const job = await jobById(client, id, { admin: false });
+    if (!job || job.status === 'rimborsata' || job.status === 'completata' || job.status === 'inviata al cloud') return job;
+    await refundJob(client, job, {
+      note: 'Invio al cloud non riuscito',
+      nextStatus: 'rimborsata',
+      errorText: errorText || 'Invio email non riuscito',
+    });
+    return jobById(client, id, { admin: false });
+  });
+}
+
+async function markPrinted(id) {
+  return withTx(async (client) => {
+    const peek = await client.query('SELECT user_id FROM print_jobs WHERE id = $1', [id]);
+    if (!peek.rowCount) throw fail(404, 'Lavoro non trovato');
+    const userId = Number(peek.rows[0].user_id);
+    await lockUser(client, userId);
+    await client.query('SELECT id FROM print_jobs WHERE id = $1 FOR UPDATE', [id]);
+    const job = await jobById(client, id, { admin: true });
+    if (job.delivery !== 'cloud') throw fail(400, 'Solo un lavoro inviato al cloud si conferma a mano');
+    if (job.status !== 'inviata al cloud' && job.status !== 'invio al cloud') {
+      throw fail(409, 'Questo lavoro non è in attesa di conferma');
+    }
+    const net = await netCharged(client, job.id);
+    await client.query(
+      `UPDATE print_jobs SET
+        status = 'completata', pages_printed = $2, actual_cost_cents = $3,
+        error = '', updated_at = NOW(), finished_at = NOW()
+       WHERE id = $1`,
+      [id, job.pagesCharged, Math.max(net, 0)]
+    );
+    return jobById(client, id, { admin: true });
+  });
+}
+
+async function resendCloud(id) {
+  const job = await jobById(null, id, { admin: true, withBytes: true });
+  if (!job) throw fail(404, 'Lavoro non trovato');
+  if (job.delivery !== 'cloud' || job.status !== 'invio al cloud') {
+    throw fail(409, 'Si può reinviare solo un invio al cloud interrotto');
+  }
+  if (!job.bytes || !job.bytes.length) throw fail(404, 'File non disponibile');
+  const printer = await getPrinter(job.printerId);
+  if (!logic.isCloud(printer) || !logic.targetReady(printer)) throw fail(400, 'Stampante cloud non più disponibile');
+  const cfg = mail.describe();
+  if (!cfg.enabled) throw fail(400, cfg.reason || 'Stampa via email non attiva');
+  let sent;
+  try {
+    sent = await mail.sendPdf({ to: printer.cloudEmail, filename: job.filename, pdf: job.bytes });
+  } catch (err) {
+    const why = (err && err.expose && err.message) ? err.message : 'Invio email non riuscito';
+    try { await failCloudSend(id, why); } catch (refundErr) {
+      console.error('rimborso cloud non riuscito:', refundErr.message);
+    }
+    throw fail(502, why + ' Il credito è stato rimborsato.');
+  }
+  return markCloudSent(id, sent.messageId);
+}
+
+function cloudStatus() {
+  const cfg = mail.describe();
+  return {
+    enabled: cfg.enabled,
+    flag: cfg.flag,
+    configured: cfg.configured,
+    transport: cfg.transport,
+    from: cfg.from,
+    reason: cfg.reason,
+  };
 }
 
 module.exports = {
@@ -1193,4 +1392,8 @@ module.exports = {
   heartbeat,
   printersForAgent,
   printerForQuote,
+  usableByMember,
+  markPrinted,
+  resendCloud,
+  cloudStatus,
 };

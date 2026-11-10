@@ -375,6 +375,9 @@ app.use((err, q, s, next) => {
   if (err.expose && err.status && err.status < 500) {
     return s.status(err.status).json({ error: err.message });
   }
+  if (err.expose && err.status === 502) {
+    return s.status(502).json({ error: err.message });
+  }
   s.status(500).json({ error: 'Errore del server' });
 });
 

@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const net = require('net');
 const { Client } = require('pg');
 const { PDFDocument, StandardFonts } = require('pdf-lib');
 const sharp = require('sharp');
@@ -76,6 +77,67 @@ async function waitHealth(base, child) {
   throw new Error('health timeout: ' + last + '\n' + child.log());
 }
 
+function pdfFromSmtp(raw) {
+  const text = raw.split('\r\n').map((line) => (line.startsWith('.') ? line.slice(1) : line)).join('\r\n');
+  const marker = 'Content-Transfer-Encoding: base64\r\n\r\n';
+  const at = text.indexOf(marker);
+  assert.ok(at > 0, 'allegato PDF assente');
+  const b64 = text.slice(at + marker.length).split('\r\n--')[0].replace(/\r\n/g, '');
+  return Buffer.from(b64, 'base64');
+}
+
+function startSmtp() {
+  const state = { messages: [], rejectNext: false };
+  const server = net.createServer((socket) => {
+    let buf = '';
+    let collecting = false;
+    let data = '';
+    const reply = (line) => socket.write(line + '\r\n');
+    reply('220 test ready');
+    socket.on('data', (chunk) => {
+      const text = chunk.toString('latin1');
+      if (collecting) {
+        data += text;
+        const end = data.indexOf('\r\n.\r\n');
+        if (end >= 0) {
+          state.messages.push(data.slice(0, end));
+          data = '';
+          collecting = false;
+          if (state.rejectNext) {
+            state.rejectNext = false;
+            reply('550 rejected');
+          } else reply('250 queued');
+        }
+        return;
+      }
+      buf += text;
+      while (!collecting && buf.includes('\r\n')) {
+        const i = buf.indexOf('\r\n');
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const cmd = line.toUpperCase();
+        if (cmd.startsWith('EHLO') || cmd.startsWith('HELO')) socket.write('250-test\r\n250 OK\r\n');
+        else if (cmd === 'DATA') {
+          collecting = true;
+          data = buf;
+          buf = '';
+          reply('354 send');
+        } else if (cmd.startsWith('QUIT')) {
+          reply('221 bye');
+          socket.end();
+        } else reply('250 OK');
+      }
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      state.server = server;
+      state.port = server.address().port;
+      resolve(state);
+    });
+  });
+}
+
 function stop(child) {
   return new Promise((resolve) => {
     if (!child || child.exitCode != null) return resolve();
@@ -120,11 +182,21 @@ async function main() {
   const dbBackup = fs.existsSync(dbFile) ? fs.readFileSync(dbFile) : null;
   if (dbBackup) fs.unlinkSync(dbFile);
   await resetSchema(url);
-  const child = spawnServer(port, { PRINT_AGENT_TOKEN: token, PRINT_STRIPE_ENABLED: '' });
+  const smtp = await startSmtp();
+  const child = spawnServer(port, {
+    PRINT_AGENT_TOKEN: token,
+    PRINT_STRIPE_ENABLED: '',
+    PRINT_CLOUD_ENABLED: '1',
+    SMTP_HOST: '127.0.0.1',
+    SMTP_PORT: String(smtp.port),
+    SMTP_SECURE: 'plain',
+    SMTP_FROM: 'Base Luna <stampa@studio.test>',
+  });
   try {
     await waitHealth(base, child);
     assert.match(child.log(), /Stampa: agente attivo/);
     assert.match(child.log(), /ricarica Stripe disattivata/);
+    assert.match(child.log(), /cloud email attiva \(smtp\)/);
 
     const anon = await api(base, '/api/print/me');
     assert.strictEqual(anon.status, 401);
@@ -171,6 +243,7 @@ async function main() {
     assert.strictEqual(created.status, 201, JSON.stringify(created.json));
     const printerId = created.json.id;
     assert.strictEqual(created.json.connection, 'ipp://10.0.0.8:631/ipp/print');
+    assert.strictEqual(created.json.connectionType, 'agent');
     assert.strictEqual(created.json.online, false);
 
     const prices = await api(base, '/api/admin/print/pricing', {
@@ -361,6 +434,9 @@ async function main() {
     const overview = await api(base, '/api/admin/print/overview', { cookie: adminCookie });
     assert.strictEqual(overview.json.tokenConfigured, true);
     assert.strictEqual(overview.json.stripe.enabled, false);
+    assert.strictEqual(overview.json.cloud.enabled, true);
+    assert.strictEqual(overview.json.cloud.transport, 'smtp');
+    assert.match(overview.json.cloud.from, /stampa@studio\.test/);
     assert.ok(overview.json.stats.series.length === 30);
     assert.ok(overview.json.stats.month.pages >= 4);
     assert.strictEqual(typeof overview.json.stats.pending, 'number');
@@ -371,6 +447,116 @@ async function main() {
     assert.strictEqual(act.pending, 0);
     const online = overview.json.printers.find((p) => p.id === printerId);
     assert.strictEqual(online.online, true);
+
+    const duplexCloud = await api(base, '/api/admin/print/printers', {
+      method: 'POST', cookie: adminCookie,
+      body: {
+        name: 'Epson rotta', connectionType: 'cloud', cloudProvider: 'epson',
+        cloudEmail: 'rotta@print.epsonconnect.com', supportsDuplex: true, formats: ['A4'],
+        enabled: true, visible: true,
+      },
+    });
+    assert.strictEqual(duplexCloud.status, 400, JSON.stringify(duplexCloud.json));
+    const cloudPrinter = await api(base, '/api/admin/print/printers', {
+      method: 'POST', cookie: adminCookie,
+      body: {
+        name: 'Epson bancone', location: 'Ingresso', connectionType: 'cloud', cloudProvider: 'epson',
+        cloudEmail: 'Bancone@print.epsonconnect.com', cloudNotes: 'mittente già in lista',
+        supportsColor: false, supportsDuplex: false, formats: ['A4'],
+        agentId: 'studio-1', protocol: 'ipp', host: '10.0.0.8',
+        enabled: true, visible: true, priceBw: 0.05,
+      },
+    });
+    assert.strictEqual(cloudPrinter.status, 201, JSON.stringify(cloudPrinter.json));
+    assert.strictEqual(cloudPrinter.json.connectionType, 'cloud');
+    assert.strictEqual(cloudPrinter.json.cloudEmail, 'bancone@print.epsonconnect.com');
+    assert.strictEqual(cloudPrinter.json.protocol, 'ipp');
+    const cloudId = cloudPrinter.json.id;
+    const meCloud = await api(base, '/api/print/me', { cookie: memberCookie });
+    const visibleCloud = meCloud.json.printers.find((p) => p.id === cloudId);
+    assert.ok(visibleCloud, 'cloud printer hidden from member');
+    assert.strictEqual(visibleCloud.connectionType, 'cloud');
+    assert.strictEqual(visibleCloud.cloudLabel, 'Epson Connect');
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(visibleCloud, 'cloudEmail'), false);
+    const agentCfg = await api(base, '/api/agent/config?agentId=studio-1', {
+      headers: { authorization: 'Bearer ' + token },
+    });
+    assert.ok(agentCfg.json.printers.every((p) => p.id !== cloudId));
+    const upCloud = await upload(base, memberCookie, await pdfBytes(1), 'volantino.pdf', 'application/pdf');
+    assert.strictEqual(upCloud.status, 201, JSON.stringify(upCloud.json));
+    const beforeCloud = await balanceOf(url, 'lia-print@example.invalid');
+    const cloudQuote = await api(base, '/api/print/quote', {
+      method: 'POST', cookie: memberCookie,
+      body: { uploadId: upCloud.json.id, printerId: cloudId, copies: 2, color: true, duplex: true, format: 'A3', pageRange: '' },
+    });
+    assert.strictEqual(cloudQuote.status, 200, JSON.stringify(cloudQuote.json));
+    assert.strictEqual(cloudQuote.json.color, false);
+    assert.strictEqual(cloudQuote.json.duplex, false);
+    assert.strictEqual(cloudQuote.json.format, 'A4');
+    assert.strictEqual(cloudQuote.json.costCents, 10);
+    assert.strictEqual(cloudQuote.json.delivery, 'cloud');
+    const messagesBefore = smtp.messages.length;
+    const cloudJob = await api(base, '/api/print/jobs', {
+      method: 'POST', cookie: memberCookie,
+      body: { uploadId: upCloud.json.id, printerId: cloudId, copies: 2, color: true, duplex: true, format: 'A3', pageRange: '' },
+    });
+    assert.strictEqual(cloudJob.status, 201, JSON.stringify(cloudJob.json));
+    assert.strictEqual(cloudJob.json.job.status, 'inviata al cloud');
+    assert.strictEqual(cloudJob.json.job.delivery, 'cloud');
+    assert.strictEqual(cloudJob.json.balanceCents, beforeCloud - 10);
+    assert.strictEqual(smtp.messages.length, messagesBefore + 1);
+    const mailed = pdfFromSmtp(smtp.messages[smtp.messages.length - 1]);
+    assert.strictEqual((await PDFDocument.load(mailed)).getPageCount(), 2);
+    assert.match(smtp.messages[smtp.messages.length - 1], /To: bancone@print\.epsonconnect\.com/);
+    assert.doesNotMatch(smtp.messages[smtp.messages.length - 1], /^Bcc:/m);
+    const filesBefore = fs.readdirSync(outDir).sort();
+    const agentSkip = spawn(process.execPath, ['print-agent/agent.js', '--once'], { cwd: root, env: agentEnv, stdio: 'ignore' });
+    assert.strictEqual(await new Promise((resolve) => agentSkip.on('exit', resolve)), 0);
+    assert.deepStrictEqual(fs.readdirSync(outDir).sort(), filesBefore);
+    const stillSent = await api(base, '/api/print/jobs', { cookie: memberCookie });
+    assert.strictEqual(stillSent.json.find((j) => j.id === cloudJob.json.job.id).status, 'inviata al cloud');
+    const notCancel = await api(base, '/api/print/jobs/' + cloudJob.json.job.id + '/cancel', {
+      method: 'POST', cookie: memberCookie, body: {},
+    });
+    assert.strictEqual(notCancel.status, 409);
+    const marked = await api(base, '/api/admin/print/jobs/' + cloudJob.json.job.id + '/printed', {
+      method: 'POST', cookie: adminCookie, body: {},
+    });
+    assert.strictEqual(marked.status, 200, JSON.stringify(marked.json));
+    assert.strictEqual(marked.json.status, 'completata');
+    assert.strictEqual(marked.json.pagesPrinted, 2);
+    assert.strictEqual(await balanceOf(url, 'lia-print@example.invalid'), beforeCloud - 10);
+    const againMark = await api(base, '/api/admin/print/jobs/' + cloudJob.json.job.id + '/printed', {
+      method: 'POST', cookie: adminCookie, body: {},
+    });
+    assert.strictEqual(againMark.status, 409);
+    const upFail = await upload(base, memberCookie, await pdfBytes(1), 'rifiutata.pdf', 'application/pdf');
+    smtp.rejectNext = true;
+    const failedCloud = await api(base, '/api/print/jobs', {
+      method: 'POST', cookie: memberCookie,
+      body: { uploadId: upFail.json.id, printerId: cloudId, copies: 1, color: false, duplex: false, format: 'A4', pageRange: '' },
+    });
+    assert.strictEqual(failedCloud.status, 502, JSON.stringify(failedCloud.json));
+    assert.match(failedCloud.json.error, /rimborsato/);
+    assert.strictEqual(await balanceOf(url, 'lia-print@example.invalid'), beforeCloud - 10);
+    const failedList = await api(base, '/api/print/jobs', { cookie: memberCookie });
+    const failedRow = failedList.json.find((j) => j.filename === 'rifiutata.pdf');
+    assert.strictEqual(failedRow.status, 'rimborsata');
+    const refundedCloud = await api(base, '/api/admin/print/jobs/' + cloudJob.json.job.id + '/refund', {
+      method: 'POST', cookie: adminCookie, body: { note: 'non uscito' },
+    });
+    assert.strictEqual(refundedCloud.status, 200, JSON.stringify(refundedCloud.json));
+    assert.strictEqual(refundedCloud.json.status, 'rimborsata');
+    assert.strictEqual(await balanceOf(url, 'lia-print@example.invalid'), beforeCloud);
+    const doubleRefund = await api(base, '/api/admin/print/jobs/' + cloudJob.json.job.id + '/refund', {
+      method: 'POST', cookie: adminCookie, body: {},
+    });
+    assert.strictEqual(doubleRefund.status, 409);
+    assert.strictEqual(await balanceOf(url, 'lia-print@example.invalid'), beforeCloud);
+    const agentPrinted = await api(base, '/api/admin/print/jobs/' + jobId + '/printed', {
+      method: 'POST', cookie: adminCookie, body: {},
+    });
+    assert.strictEqual(agentPrinted.status, 400);
 
     const removed = await api(base, '/api/admin/print/printers/' + printerId, { method: 'DELETE', cookie: adminCookie });
     assert.strictEqual(removed.status, 200);
@@ -384,6 +570,7 @@ async function main() {
     throw err;
   } finally {
     await stop(child);
+    if (smtp && smtp.server) await new Promise((resolve) => smtp.server.close(resolve));
     fs.rmSync(outDir, { recursive: true, force: true });
     if (dbBackup) fs.writeFileSync(dbFile, dbBackup);
     else if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);

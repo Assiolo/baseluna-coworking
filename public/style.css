@@ -986,6 +986,9 @@ nav a.nav-guida:hover{color:#fff;background:rgba(255,255,255,.08)}
 .print-preview iframe{width:100%;height:220px;border:0;border-radius:16px;background:#fff}
 .print-form{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
 .print-form .full{grid-column:1/-1}
+.print-form textarea{width:100%;min-height:78px;padding:13px 14px;border-radius:14px;border:1px solid var(--bd);background:rgba(0,0,0,.25);color:#fff;font:inherit;margin:6px 0 14px;resize:vertical}
+#pf-agent-fields[hidden],#pf-cloud-fields[hidden],#pf-label-wrap[hidden],#pf-cloud-why[hidden],#print-cloud-note[hidden]{display:none !important}
+.seg button:disabled{opacity:.35;cursor:not-allowed}
 .print-check{display:flex;align-items:center;gap:8px;margin:8px 0;color:#eee;font-size:14px}
 .print-check input{width:auto!important;margin:0!important;accent-color:#FF5B00}
 .print-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
