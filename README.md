@@ -9,7 +9,7 @@ Restano file: geometria di `data/floorplan.json` (immagine, zones, desks), `data
 
 Foto profilo: il caricamento (PNG, JPG o WEBP, max 5 MB) viene ritagliato in un quadrato da massimo 256 px, ricompresso in JPEG e salvato nella tabella `avatars` (`bytes` bytea + `content_type`). `users.avatar` è l'URL pubblico `/api/users/:id/avatar?v=…`. Se al boot un utente ha ancora un percorso `/uploads/avatars/…` e il file è sul disco, i byte vengono importati una volta con la stessa compressione; se il file non c'è più, il campo si svuota.
 
-Keep-alive (Neon free si spegne dopo ~5 minuti di inattività): `GET /api/health` esegue `SELECT 1` e risponde `{ok:true}` oppure `{ok:false}` con 503. Con `DATABASE_URL` impostata il processo ripete `SELECT 1` ogni 4 minuti finché il servizio è acceso.
+`GET /api/health` esegue `SELECT 1` solo su richiesta e risponde `{ok:true}` oppure `{ok:false}` con 503. Non è un ping periodico: su Neon free il database può spegnersi dopo circa 5 minuti senza query e si riaccende alla richiesta successiva.
 
 Piantina sostituibile: `data/floorplan.json` (zones, desks con x/y) + `public/floorplan.js` (contratto `FloorPlan.render(el, plan, state, onPick)`). Il flusso di prenotazione usa solo gli id delle scrivanie. I prezzi mostrati e addebitati arrivano da Postgres.
 Pagamenti (demo, nessun gateway): Fatturazione, PayPal, Contanti, Satispay.

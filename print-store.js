@@ -3,6 +3,7 @@ const db = require('./db');
 const logic = require('./lib/print-logic');
 const files = require('./lib/print-files');
 const mail = require('./lib/print-mail');
+const pollCache = require('./lib/print-poll-cache');
 
 const { fail } = logic;
 
@@ -200,7 +201,8 @@ function mapPrinter(r) {
   };
 }
 
-function presentPrinter(p, settings, { admin }) {
+function presentPrinter(raw, settings, { admin }) {
+  const p = raw ? pollCache.overlayPrinter(raw) : raw;
   const cloud = logic.isCloud(p);
   const online = cloud ? false : logic.isOnline(p.lastHeartbeat);
   const connection = cloud ? '' : logic.buildConnectionUri(p);
@@ -388,7 +390,12 @@ async function quotaLimit(client, userId) {
 }
 
 async function getSettings() {
-  return settingsOf(null);
+  const now = Date.now();
+  const hit = pollCache.readSettings(now);
+  if (hit) return hit;
+  const value = await settingsOf(null);
+  pollCache.writeSettings(value, now);
+  return value;
 }
 
 async function updateSettings(patch) {
@@ -413,17 +420,19 @@ async function updateSettings(patch) {
      WHERE id = 1`,
     [next.bwCents, next.colorCents, next.duplexBwCents, next.duplexColorCents, next.maxUploadBytes, next.maxCopies, next.maxPages, next.monthlyPageQuota]
   );
+  pollCache.invalidateSettings();
+  pollCache.invalidatePrinters();
   return getSettings();
 }
 
 async function listPrinters() {
   const { rows } = await db.getPool().query('SELECT * FROM printers ORDER BY name, created_at');
-  return rows.map(mapPrinter);
+  return rows.map((r) => pollCache.overlayPrinter(mapPrinter(r)));
 }
 
 async function getPrinter(id) {
   const { rows } = await db.getPool().query('SELECT * FROM printers WHERE id = $1', [id]);
-  return mapPrinter(rows[0]);
+  return pollCache.overlayPrinter(mapPrinter(rows[0]));
 }
 
 function assertCloudWritable(row, { creating }) {
@@ -457,6 +466,7 @@ async function createPrinter(input) {
         row.connection_type, row.cloud_email, row.cloud_provider, row.cloud_label, row.cloud_notes]
     );
   });
+  pollCache.invalidatePrinters();
   return getPrinter(id);
 }
 
@@ -507,12 +517,14 @@ async function updatePrinter(id, input) {
     );
     if (!upd.rowCount) throw fail(404, 'Stampante non trovata');
   });
+  pollCache.invalidatePrinters();
   return getPrinter(id);
 }
 
 async function deletePrinter(id) {
   const { rowCount } = await db.getPool().query('DELETE FROM printers WHERE id = $1', [id]);
   if (!rowCount) throw fail(404, 'Stampante non trovata');
+  pollCache.invalidatePrinters();
   return { ok: true };
 }
 
@@ -661,10 +673,14 @@ async function submitJob({ userId, uploadId, printerId, copies, color, duplex, f
     return {
       job,
       balanceCents,
+      agentId: cloud ? '' : (printer.agentId || ''),
       cloud: cloud ? { to: printer.cloudEmail, filename: upload.filename, pdf } : null,
     };
   });
-  if (!prepared.cloud) return { job: prepared.job, balanceCents: prepared.balanceCents };
+  if (!prepared.cloud) {
+    if (prepared.agentId) pollCache.markJobs(prepared.agentId);
+    return { job: prepared.job, balanceCents: prepared.balanceCents };
+  }
   return deliverCloud(prepared);
 }
 
@@ -1098,6 +1114,9 @@ async function stats() {
 }
 
 async function pullJobs(agentId) {
+  const now = Date.now();
+  if (!pollCache.shouldQueryJobs(agentId, now)) return [];
+  const epoch = pollCache.jobsEpoch(agentId);
   const { rows } = await db.getPool().query(
     `SELECT ${JOB_COLS}, p.name AS printer_name
      FROM print_jobs j
@@ -1109,7 +1128,9 @@ async function pullJobs(agentId) {
      LIMIT 5`,
     [agentId]
   );
-  return rows.map((r) => mapJob(r, { admin: false }));
+  const jobs = rows.map((r) => mapJob(r, { admin: false }));
+  pollCache.rememberJobs(agentId, jobs.length > 0, Date.now(), epoch);
+  return jobs;
 }
 
 async function claimJob(id, agentId) {
@@ -1230,43 +1251,71 @@ async function applyAgentResult({ id, agentId, status, pagesPrinted, error }) {
   });
 }
 
-async function heartbeat(agentId, reports) {
-  await db.getPool().query(
-    `UPDATE printers SET last_heartbeat = NOW(), updated_at = NOW()
-     WHERE agent_id = $1 AND enabled = TRUE AND COALESCE(connection_type, 'agent') = 'agent'`,
+function reportPayload(report) {
+  return {
+    state: String(report.state || 'unknown').slice(0, 40),
+    message: String(report.message || '').slice(0, 300),
+    backend: String(report.backend || '').slice(0, 40),
+    supplies: Array.isArray(report.supplies) ? report.supplies.slice(0, 12).map((s) => ({
+      name: String((s && s.name) || '').slice(0, 80),
+      level: s && s.level != null && Number.isFinite(Number(s.level)) ? Math.max(0, Math.min(100, Math.round(Number(s.level)))) : null,
+    })) : [],
+  };
+}
+
+async function loadAgentPrinters(agentId, now) {
+  const hit = pollCache.readPrinters(agentId, now);
+  if (hit) return hit;
+  const { rows } = await db.getPool().query(
+    `SELECT * FROM printers WHERE agent_id = $1 AND COALESCE(connection_type, 'agent') = 'agent' ORDER BY name`,
     [agentId]
   );
+  const mapped = rows.map(mapPrinter);
+  pollCache.writePrinters(agentId, mapped, now);
+  return mapped;
+}
+
+async function heartbeat(agentId, reports) {
+  const now = Date.now();
+  const printers = await loadAgentPrinters(agentId, now);
+  const byId = new Map(printers.map((p) => [p.id, p]));
   const list = Array.isArray(reports) ? reports.slice(0, 30) : [];
+  const reported = new Set();
+  const withStatus = [];
+  const touchOnly = [];
   for (const report of list) {
-    if (!report || typeof report.id !== 'string') continue;
-    const payload = {
-      state: String(report.state || 'unknown').slice(0, 40),
-      message: String(report.message || '').slice(0, 300),
-      backend: String(report.backend || '').slice(0, 40),
-      supplies: Array.isArray(report.supplies) ? report.supplies.slice(0, 12).map((s) => ({
-        name: String((s && s.name) || '').slice(0, 80),
-        level: s && s.level != null && Number.isFinite(Number(s.level)) ? Math.max(0, Math.min(100, Math.round(Number(s.level)))) : null,
-      })) : [],
-    };
+    if (!report || typeof report.id !== 'string' || !byId.has(report.id)) continue;
+    reported.add(report.id);
+    const payload = reportPayload(report);
+    const decision = pollCache.observeHeartbeat(report.id, { at: now, status: payload, hasReport: true });
+    if (decision.flush) withStatus.push({ id: report.id, payload });
+  }
+  for (const printer of printers) {
+    if (!printer.enabled || reported.has(printer.id)) continue;
+    const decision = pollCache.observeHeartbeat(printer.id, { at: now, hasReport: false });
+    if (decision.flush) touchOnly.push(printer.id);
+  }
+  for (const item of withStatus) {
     await db.getPool().query(
       `UPDATE printers SET status_json = $2::jsonb, last_heartbeat = NOW(), updated_at = NOW()
        WHERE id = $1 AND agent_id = $3 AND COALESCE(connection_type, 'agent') = 'agent'`,
-      [report.id, JSON.stringify(payload), agentId]
+      [item.id, JSON.stringify(item.payload), agentId]
     );
   }
-  const { rows } = await db.getPool().query(
-    `SELECT * FROM printers WHERE agent_id = $1 AND COALESCE(connection_type, 'agent') = 'agent' ORDER BY name`,
-    [agentId]
-  );
-  return rows.map(mapPrinter);
+  for (const id of touchOnly) {
+    await db.getPool().query(
+      `UPDATE printers SET last_heartbeat = NOW(), updated_at = NOW()
+       WHERE id = $1 AND agent_id = $2 AND enabled = TRUE
+         AND COALESCE(connection_type, 'agent') = 'agent'`,
+      [id, agentId]
+    );
+  }
+  return printers.map((p) => pollCache.overlayPrinter(p));
 }
 
 async function printersForAgent(agentId) {
-  const { rows } = await db.getPool().query(
-    `SELECT * FROM printers WHERE agent_id = $1 AND COALESCE(connection_type, 'agent') = 'agent' ORDER BY name`,
-    [agentId]
-  );
-  return rows.map(mapPrinter);
+  const list = await loadAgentPrinters(agentId, Date.now());
+  return list.map((p) => pollCache.overlayPrinter(p));
 }
 
 async function markCloudSent(id, cloudRef) {
