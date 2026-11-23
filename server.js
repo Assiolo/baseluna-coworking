@@ -382,17 +382,8 @@ app.use((err, q, s, next) => {
 });
 
 let server;
-let keepAlive;
-
-function startKeepAlive() {
-  keepAlive = setInterval(() => {
-    db.ping().catch((err) => console.error('DB keep-alive failed:', err.message));
-  }, 4 * 60 * 1000);
-  if (typeof keepAlive.unref === 'function') keepAlive.unref();
-}
 
 function shutdown() {
-  if (keepAlive) clearInterval(keepAlive);
   const done = () => db.close().catch(() => {}).finally(() => process.exit(0));
   if (server) server.close(done);
   else done();
@@ -419,7 +410,6 @@ async function boot() {
     console.error('FATAL: connessione o schema Postgres non riusciti:', message);
     process.exit(1);
   }
-  startKeepAlive();
   printRoutes.logConfig();
   const PORT = process.env.PORT || 5173;
   server = app.listen(PORT, '0.0.0.0', () => console.log('Base Luna Coworking su http://localhost:' + PORT));

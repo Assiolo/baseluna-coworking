@@ -7,6 +7,7 @@ const logic = require('../lib/print-logic');
 const files = require('../lib/print-files');
 const stripe = require('../lib/print-stripe');
 const mail = require('../lib/print-mail');
+const pollCache = require('../lib/print-poll-cache');
 
 function throws(status, fn) {
   assert.throws(fn, (err) => err.status === status);
@@ -293,6 +294,94 @@ async function main() {
       else process.env[key] = value;
     }
   }
+
+  const jobs = pollCache.createPollCache();
+  const jobAt = 5_000_000;
+  assert.strictEqual(jobs.shouldQueryJobs('studio-1', jobAt), true);
+  jobs.rememberJobs('studio-1', false, jobAt);
+  assert.strictEqual(jobs.shouldQueryJobs('studio-1', jobAt + 1000), false);
+  assert.strictEqual(jobs.shouldQueryJobs('studio-1', jobAt + pollCache.JOBS_SAFETY_MS - 1), false);
+  assert.strictEqual(jobs.shouldQueryJobs('studio-1', jobAt + pollCache.JOBS_SAFETY_MS), true);
+  jobs.rememberJobs('studio-1', false, jobAt + pollCache.JOBS_SAFETY_MS);
+  jobs.markJobs('studio-1');
+  assert.strictEqual(jobs.shouldQueryJobs('studio-1', jobAt + pollCache.JOBS_SAFETY_MS + 1000), true);
+  jobs.rememberJobs('studio-1', true, jobAt + pollCache.JOBS_SAFETY_MS + 1000);
+  assert.strictEqual(jobs.shouldQueryJobs('studio-1', jobAt + pollCache.JOBS_SAFETY_MS + 2000), true);
+  jobs.rememberJobs('studio-2', false, jobAt);
+  assert.strictEqual(jobs.shouldQueryJobs('studio-2', jobAt + 1000), false);
+  jobs.markJobs('studio-1');
+  assert.strictEqual(jobs.shouldQueryJobs('studio-2', jobAt + 2000), false);
+  const during = pollCache.createPollCache();
+  during.rememberJobs('studio-1', false, jobAt);
+  const startEpoch = during.jobsEpoch('studio-1');
+  during.markJobs('studio-1');
+  during.rememberJobs('studio-1', false, jobAt + 50, startEpoch);
+  assert.strictEqual(during.shouldQueryJobs('studio-1', jobAt + 100), true);
+
+  const beats = pollCache.createPollCache();
+  const t0 = 1_700_000_000_000;
+  let current = { state: 'idle', message: 'pronta', supplies: [{ name: 'Nero', level: 70 }], backend: 'file' };
+  const first = beats.observeHeartbeat('p1', { at: t0, status: current, hasReport: true });
+  assert.strictEqual(first.flush, true);
+  assert.strictEqual(first.reason, 'first');
+  assert.strictEqual(beats.observeHeartbeat('p1', { at: t0 + 30_000, status: current, hasReport: true }).flush, false);
+  current = { ...current, state: 'printing' };
+  assert.strictEqual(beats.observeHeartbeat('p1', { at: t0 + 40_000, status: current, hasReport: true }).reason, 'status');
+  current = { ...current, message: 'cassetto aperto' };
+  assert.strictEqual(beats.observeHeartbeat('p1', { at: t0 + 50_000, status: current, hasReport: true }).reason, 'status');
+  current = { ...current, supplies: [{ name: 'Nero', level: 12 }] };
+  const tonerAt = t0 + 60_000;
+  assert.strictEqual(beats.observeHeartbeat('p1', { at: tonerAt, status: current, hasReport: true }).reason, 'status');
+  current = { ...current, backend: 'snmp' };
+  assert.strictEqual(beats.observeHeartbeat('p1', { at: tonerAt + 10_000, status: current, hasReport: true }).flush, false);
+  assert.strictEqual(beats.observeHeartbeat('p1', { at: tonerAt + pollCache.HEARTBEAT_FLUSH_MS - 1, status: current, hasReport: true }).flush, false);
+  const interval = beats.observeHeartbeat('p1', { at: tonerAt + pollCache.HEARTBEAT_FLUSH_MS, status: current, hasReport: true });
+  assert.strictEqual(interval.flush, true);
+  assert.strictEqual(interval.reason, 'interval');
+  assert.strictEqual(beats.observeHeartbeat('p2', { at: tonerAt, status: current, hasReport: true }).reason, 'first');
+  const seenAt = tonerAt + pollCache.HEARTBEAT_FLUSH_MS;
+  const over = beats.overlayPrinter({ id: 'p1', lastHeartbeat: '2000-01-01T00:00:00.000Z', status: { state: 'db' } });
+  assert.strictEqual(over.lastHeartbeat, new Date(seenAt).toISOString());
+  assert.strictEqual(over.status.state, 'printing');
+  assert.strictEqual(over.status.message, 'cassetto aperto');
+  assert.strictEqual(over.status.supplies[0].level, 12);
+  assert.strictEqual(logic.isOnline(over.lastHeartbeat, seenAt + 1000), true);
+  assert.strictEqual(logic.isOnline(over.lastHeartbeat, seenAt + 90_000), false);
+  const fallback = beats.overlayPrinter({ id: 'assente', lastHeartbeat: 'db-iso', status: { state: 'db' } });
+  assert.strictEqual(fallback.lastHeartbeat, 'db-iso');
+  assert.strictEqual(fallback.status.state, 'db');
+  const quiet = pollCache.createPollCache();
+  assert.strictEqual(quiet.observeHeartbeat('p', { at: t0, hasReport: false }).reason, 'first');
+  assert.strictEqual(quiet.observeHeartbeat('p', { at: t0 + 1000, hasReport: false }).flush, false);
+  assert.strictEqual(quiet.observeHeartbeat('p', { at: t0 + pollCache.HEARTBEAT_FLUSH_MS, hasReport: false }).reason, 'interval');
+  const kept = quiet.overlayPrinter({ id: 'p', lastHeartbeat: null, status: { state: 'dal-db' } });
+  assert.strictEqual(kept.status.state, 'dal-db');
+  assert.strictEqual(kept.lastHeartbeat, new Date(t0 + pollCache.HEARTBEAT_FLUSH_MS).toISOString());
+
+  const settingsCache = pollCache.createPollCache();
+  settingsCache.writeSettings({ bwCents: 5, colorCents: 20 }, t0);
+  assert.deepStrictEqual(settingsCache.readSettings(t0 + pollCache.SETTINGS_TTL_MS - 1), { bwCents: 5, colorCents: 20 });
+  assert.strictEqual(settingsCache.readSettings(t0 + pollCache.SETTINGS_TTL_MS), null);
+  settingsCache.writeSettings({ bwCents: 5 }, t0);
+  const tweaked = settingsCache.readSettings(t0 + 1);
+  tweaked.bwCents = 99;
+  assert.strictEqual(settingsCache.readSettings(t0 + 2).bwCents, 5);
+  settingsCache.invalidateSettings();
+  assert.strictEqual(settingsCache.readSettings(t0 + 3), null);
+
+  const printersCache = pollCache.createPollCache();
+  printersCache.writePrinters('studio-1', [{ id: 'a' }], t0);
+  printersCache.writePrinters('studio-2', [{ id: 'b' }], t0);
+  printersCache.invalidatePrinters('studio-1');
+  assert.strictEqual(printersCache.readPrinters('studio-1', t0 + 1), null);
+  assert.deepStrictEqual(printersCache.readPrinters('studio-2', t0 + 1), [{ id: 'b' }]);
+  assert.deepStrictEqual(printersCache.readPrinters('studio-2', t0 + pollCache.PRINTERS_TTL_MS - 1), [{ id: 'b' }]);
+  assert.strictEqual(printersCache.readPrinters('studio-2', t0 + pollCache.PRINTERS_TTL_MS), null);
+  printersCache.writePrinters('studio-1', [{ id: 'a' }], t0);
+  printersCache.writePrinters('studio-2', [{ id: 'b' }], t0);
+  printersCache.invalidatePrinters();
+  assert.strictEqual(printersCache.readPrinters('studio-1', t0 + 1), null);
+  assert.strictEqual(printersCache.readPrinters('studio-2', t0 + 1), null);
 
   console.log('print unit ok');
 }
