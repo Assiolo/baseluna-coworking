@@ -1,7 +1,7 @@
 # Base Luna Coworking
-Avvio: `npm install`, poi `DATABASE_URL=postgres://… node server.js` → http://localhost:5173 (`PORT` configurabile). Senza `DATABASE_URL` il processo esce subito: non c'è più il ripiego su JSON.
+Avvio: `npm install`, poi `DATABASE_URL=postgres://… node server.js` → http://localhost:5173 (`PORT` configurabile). Senza `DATABASE_URL` il processo esce subito: non c'è più il ripiego su JSON. Se Postgres non risponde, il processo apre comunque la porta: homepage e file statici restano serviti, le API che usano il database rispondono 503, e schema, import e prezzi ripartono in background al massimo ogni 5 minuti. Al primo successo i tentativi finiscono. Non c'è un ping periodico.
 
-Dati su Postgres (Neon, stringa pooled in `DATABASE_URL`, con `sslmode=require`): utenti (nome, bio, titolo e foto), sessioni, prenotazioni, pagamenti, prezzi dei pacchetti. Le tabelle si creano all'avvio se mancano. Il primo account registrato diventa admin se non ne esiste già uno.
+Dati su Postgres (Neon, stringa pooled in `DATABASE_URL`, con `sslmode=require`): utenti (nome, bio, titolo e foto), sessioni, prenotazioni, pagamenti, prezzi dei pacchetti. Le tabelle si creano all'avvio se mancano, anche se il primo collegamento riesce solo dopo. Il primo account registrato diventa admin se non ne esiste già uno.
 
 `data/db.json` non è più nel repository (è in `.gitignore`). Se al primo avvio le tabelle sono vuote e quel file è ancora sul disco, viene importato una sola volta; se c'è già almeno una riga, l'import si salta. La forma del file è in `data/db.example.json` (senza hash veri): non copiarlo su `db.json` se vuoi che la prima registrazione diventi admin. Per ripartire da zero svuota le tabelle Postgres, non un file.
 
@@ -9,7 +9,7 @@ Restano file: geometria di `data/floorplan.json` (immagine, zones, desks), `data
 
 Foto profilo: il caricamento (PNG, JPG o WEBP, max 5 MB) viene ritagliato in un quadrato da massimo 256 px, ricompresso in JPEG e salvato nella tabella `avatars` (`bytes` bytea + `content_type`). `users.avatar` è l'URL pubblico `/api/users/:id/avatar?v=…`. Se al boot un utente ha ancora un percorso `/uploads/avatars/…` e il file è sul disco, i byte vengono importati una volta con la stessa compressione; se il file non c'è più, il campo si svuota.
 
-`GET /api/health` esegue `SELECT 1` solo su richiesta e risponde `{ok:true}` oppure `{ok:false}` con 503. Non è un ping periodico: su Neon free il database può spegnersi dopo circa 5 minuti senza query e si riaccende alla richiesta successiva.
+`GET /api/health` esegue `SELECT 1` solo su richiesta, e solo dopo che l'inizializzazione è riuscita, e risponde `{ok:true}` oppure `{ok:false}` con 503. Finché il database non è pronto risponde 503 senza interrogarlo. Non è un ping periodico: su Neon free il database può spegnersi dopo circa 5 minuti senza query e si riaccende alla richiesta successiva.
 
 Piantina sostituibile: `data/floorplan.json` (zones, desks con x/y) + `public/floorplan.js` (contratto `FloorPlan.render(el, plan, state, onPick)`). Il flusso di prenotazione usa solo gli id delle scrivanie. I prezzi mostrati e addebitati arrivano da Postgres.
 Pagamenti (demo, nessun gateway): Fatturazione, PayPal, Contanti, Satispay.
