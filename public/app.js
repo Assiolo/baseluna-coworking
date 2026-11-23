@@ -13,18 +13,37 @@ const $=s=>document.querySelector(s),A=document.getElementById('app');
 const api=async(u,o={})=>{const r=await fetch(u,{headers:{'Content-Type':'application/json'},...o,body:o.body&&JSON.stringify(o.body)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Errore');return j};
 const PAY={bonifico:'Bonifico',paypal:'PayPal',contanti:'Contanti',satispay:'Satispay'},SLOT={mattina:'Mattina 9–13',pomeriggio:'Pomeriggio 14–19',giornata:'Giornata intera'};
 const today=()=>new Date().toISOString().slice(0,10);
-let ME=null,PLAN=null,view='home';
+let ME=null,PLAN=null,view='home',serviceMsg='';
 const S={mode:'giornaliero',date:today(),month:today().slice(0,7),slot:'giornata',desk:null,pay:null,show:'piantina',occ:[]};
-let SITE={},TODAY={date:today(),bookings:[]};async function boot(){PLAN=await api('/api/floorplan');try{TODAY=await api('/api/today')}catch{TODAY={date:today(),bookings:[]}}try{SITE=await api('/api/site');if(SITE.heroImage)document.documentElement.style.setProperty('--hero',`url('${SITE.heroImage}')`)}catch{SITE={}}try{ME=await api('/api/me')}catch{ME=null}
-if(ME&&/[?&]stampa=/.test(location.search)){
-  view='stampa';
-  try{
-    if(/[?&]stampa=ok(?:&|$)/.test(location.search))sessionStorage.setItem('print-flash','Pagamento ricevuto. Il credito compare appena Stripe conferma.');
-    else if(/[?&]stampa=annullata(?:&|$)/.test(location.search))sessionStorage.setItem('print-flash','Ricarica annullata. Nessun addebito.');
-  }catch(e){}
-  history.replaceState(null,'',location.pathname);
+let SITE={},TODAY={date:today(),bookings:[]};
+const DB_DOWN_MSG='Servizio temporaneamente non disponibile, riprova più tardi';
+function planOffline(){return {desks:[{id:'A1',label:'A1'},{id:'A2',label:'A2'},{id:'A3',label:'A3'},{id:'B1',label:'B1'},{id:'B2',label:'B2'},{id:'B3',label:'B3'}],zones:[{id:'latoA',label:'Lato A'},{id:'latoB',label:'Lato B'}],pricing:{mattina:'—',pomeriggio:'—',giornata:'—',mensile:'—'}};}
+async function loadShell(){
+  try{PLAN=await api('/api/floorplan');serviceMsg='';}
+  catch(e){serviceMsg=e.message||DB_DOWN_MSG;if(!PLAN||!PLAN.image)PLAN=planOffline();}
+  try{TODAY=await api('/api/today')}catch{TODAY={date:today(),bookings:[]}}
+  try{SITE=await api('/api/site');if(SITE.heroImage)document.documentElement.style.setProperty('--hero',`url('${SITE.heroImage}')`)}catch{SITE={}}
+  try{ME=await api('/api/me')}catch{ME=null}
 }
-render()}
+async function boot(){
+  await loadShell();
+  if(ME&&/[?&]stampa=/.test(location.search)){
+    view='stampa';
+    try{
+      if(/[?&]stampa=ok(?:&|$)/.test(location.search))sessionStorage.setItem('print-flash','Pagamento ricevuto. Il credito compare appena Stripe conferma.');
+      else if(/[?&]stampa=annullata(?:&|$)/.test(location.search))sessionStorage.setItem('print-flash','Ricarica annullata. Nessun addebito.');
+    }catch(e){}
+    history.replaceState(null,'',location.pathname);
+  }
+  render();
+  if(serviceMsg!==DB_DOWN_MSG)return;
+  for(const ms of [1000,2000,4000,8000]){
+    await new Promise(r=>setTimeout(r,ms));
+    if(serviceMsg!==DB_DOWN_MSG)return;
+    await loadShell();
+    if(!serviceMsg){render();return}
+  }
+}
 
 const pad2=n=>String(n).padStart(2,'0');
 function romeClock(){
@@ -127,7 +146,7 @@ matchMedia(NAV_MQ).addEventListener('change',e=>{if(!e.matches) setNavOpen(false
 function render(){const gen=++paintGen;document.body.classList.remove('nav-open');document.body.classList.toggle('app-bg',!!ME);if(!ME){if(window.BaseTour)BaseTour.onLoggedOut();return LANDED?authView('login'):landing()}if(window.BaseTour&&!BaseTour.active&&!BaseTour.seen())BaseTour.arm=true;
  const items=[['home','Home',''],['prenota','Prenota','nav-prenota'],['mie','Le mie prenotazioni',''],['stampa','Stampa',''],['profilo','Il mio profilo','profile'],...(ME.role==='admin'?[['admin','Admin','']]:[])];
  const links=items.map(([k,l,t])=>`<a class="${view===k?'on':''}" data-v="${k}"${t?` data-tour="${t}"`:''}>${l}</a>`).join('')+'<a id="openGuidaMenu" class="nav-menu-only">Guida</a><a id="out">Esci</a>';
- A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><div class="nav-brand"><b id="goHome">Base <span>Luna</span> <span class="nav-fullword">Coworking</span></b><a id="openGuida" class="nav-guida">Guida</a></div>${avatar()}${navBurger()}${navPanel(links)}</nav><main id="m"></main>`;
+ A.innerHTML=`<div class="appbg-photo" aria-hidden="true"><img src="/media/dashboard-bg.jpg" alt=""></div><div class="appshade"></div><nav class="glass"><div class="nav-brand"><b id="goHome">Base <span>Luna</span> <span class="nav-fullword">Coworking</span></b><a id="openGuida" class="nav-guida">Guida</a></div>${avatar()}${navBurger()}${navPanel(links)}</nav>${svcNote()}<main id="m"></main>`;
  A.querySelectorAll('[data-v]').forEach(a=>a.onclick=()=>{view=a.dataset.v;render()});$('#out').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catch{}ME=null;LANDED=false;view='home';document.body.classList.remove('app-bg','nav-open');render()};
  $('#goHome').onclick=()=>{view='home';render()};
  const openGuide=()=>{if(window.BaseTour)BaseTour.open()};
@@ -139,7 +158,7 @@ function render(){const gen=++paintGen;document.body.classList.remove('nav-open'
 function landing(){document.body.classList.remove('app-bg');const P=PLAN.pricing;const vid=SITE.heroVideo?`<video class="bgvid" autoplay muted loop playsinline poster="${SITE.heroImage||''}"><source src="${SITE.heroVideo}" type="video/mp4"></video><div class="bgvid-shade"></div>`:'';A.innerHTML=`<div class="land has-bgvid">
 ${vid}<div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="ring"></div><div class="pill3d"></div>
 <nav class="glass rise"><b class="brand"><i class="dot"></i>Base <span>Luna</span></b>${navBurger()}${navPanel('<a href="#spazi">Spazi</a><a href="#prezzi">Prezzi</a><a data-a="login">Accedi</a><a class="btn sm" data-a="reg">Registrati</a>')}</nav>
-<header class="hero2"><div class="htxt"><p class="kick rise" style="--d:.1s"><i></i>Damanhur Crea · Creative studio & coworking</p>
+${svcNote()}<header class="hero2"><div class="htxt"><p class="kick rise" style="--d:.1s"><i></i>Damanhur Crea · Creative studio & coworking</p>
 <h1 class="mega rise" style="--d:.2s">Crea<br><em>sulla</em> <span class="grad">Luna.</span></h1>
 <p class="lead rise" style="--d:.35s">Scrivanie in uno studio creativo dove design, AI e idee condividono lo stesso tavolo. Scegli la postazione, prenota un giorno o un mese intero.</p>
 <div class="cta rise" style="--d:.5s"><button class="btn lg" data-a="reg">Prenota la tua scrivania →</button><button class="btn ghost lg" data-a="login">Accedi</button></div>
@@ -175,7 +194,7 @@ return `<div class="hc-live"><div class="hc-top"><small>Oggi in studio</small></
  const L=A.querySelector('.land'),T=A.querySelector('#tilt'),RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
  const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:.15});L.querySelectorAll('.reveal').forEach((r,i)=>{r.style.setProperty('--d',(i%3)*.12+'s');io.observe(r)});
  if(!RM)L.onmousemove=e=>{const x=e.clientX/innerWidth-.5,y=e.clientY/innerHeight-.5;L.querySelectorAll('.orb,.ring,.pill3d').forEach((s,i)=>s.style.translate=`${x*(i+1)*-22}px ${y*(i+1)*-22}px`);if(T)T.style.transform=`perspective(1000px) rotateY(${x*14}deg) rotateX(${-y*14}deg)`;L.style.setProperty('--mx',e.clientX+'px');L.style.setProperty('--my',e.clientY+'px')};startLiveClock(A)}
-function authView(t){document.body.classList.add('app-bg');A.innerHTML=`${SITE.heroVideo?`<video class="appvid" autoplay muted loop playsinline><source src="${SITE.heroVideo}" type="video/mp4"></video>`:''}<div class="appshade"></div><div class="glass auth rise"><a id="back" class="sub" style="cursor:pointer">← Home</a><div class="logo">Base <span>Luna</span></div><p class="sub">Coworking · Torino</p><div class="seg"><button class="${t==='login'?'on':''}" id="tl">Accedi</button><button class="${t==='reg'?'on':''}" id="tr">Registrati</button></div>
+function authView(t){document.body.classList.add('app-bg');A.innerHTML=`${SITE.heroVideo?`<video class="appvid" autoplay muted loop playsinline><source src="${SITE.heroVideo}" type="video/mp4"></video>`:''}<div class="appshade"></div><div class="glass auth rise"><a id="back" class="sub" style="cursor:pointer">← Home</a><div class="logo">Base <span>Luna</span></div><p class="sub">Coworking · Torino</p>${svcNote()}<div class="seg"><button class="${t==='login'?'on':''}" id="tl">Accedi</button><button class="${t==='reg'?'on':''}" id="tr">Registrati</button></div>
  <form id="f">${t==='reg'?'<label>Nome e cognome</label><input name="name" required>':''}<label>Email</label><input name="email" type="email" required><label>Password</label><input name="password" type="password" required minlength="6"><div class="err" id="e"></div><button class="btn" style="width:100%">${t==='login'?'Accedi':'Crea account'}</button></form></div>`;
  $('#back').onclick=()=>{LANDED=false;render()};$('#tl').onclick=()=>authView('login');$('#tr').onclick=()=>authView('reg');
  $('#f').onsubmit=async e=>{e.preventDefault();try{ME=await api(t==='login'?'/api/login':'/api/register',{method:'POST',body:Object.fromEntries(new FormData(e.target))});view='home';render()}catch(x){$('#e').textContent=x.message}}}
@@ -278,14 +297,14 @@ async function homeView(){
   }
   startLiveClock(A);
 }
-async function bookView(){const gen=paintGen;await loadOcc();try{const site=await api('/api/site');window.__payLinks={paypal:site.paypalPaymentUrl||'https://www.paypal.biz/baselunastudio',satispay:site.satispayPaymentUrl||''}}catch{window.__payLinks={paypal:'https://www.paypal.biz/baselunastudio',satispay:''}};if(gen!==paintGen||view!=='prenota')return;const P=PLAN.pricing,price=S.mode==='mensile'?P.mensile:P[S.slot];
+async function bookView(){const gen=paintGen;let bookErr='';try{await loadOcc()}catch(e){bookErr=e.message||'Errore'}try{const site=await api('/api/site');window.__payLinks={paypal:site.paypalPaymentUrl||'https://www.paypal.biz/baselunastudio',satispay:site.satispayPaymentUrl||''}}catch{window.__payLinks={paypal:'https://www.paypal.biz/baselunastudio',satispay:''}};if(gen!==paintGen||view!=='prenota')return;const P=PLAN.pricing,price=S.mode==='mensile'?P.mensile:P[S.slot];
  $('#m').innerHTML=`${welcome()}<h1>Prenota la tua postazione</h1><p class="sub">Scegli quando, dove e come pagare.</p>
  <div class="glass card" data-tour="when"><h2>1 · Quando</h2><div class="prod" id="mode"><button data-k="giornaliero" class="${S.mode==='giornaliero'?'on':''}"><small>Giorno / giornata</small><b>Ingresso giornaliero</b><span>Mattina, pomeriggio o giornata intera</span><em>da €${P.mattina}</em></button><button data-k="mensile" class="${S.mode==='mensile'?'on':''}"><small>Consigliato</small><b>Pacchetto mensile</b><span>Tutti i giorni feriali del mese, giornata intera, stessa scrivania</span><em>€${P.mensile}/mese</em></button></div>
  <div class="row">${S.mode==='mensile'?`<div><label>Mese (tutti i giorni feriali, giornata intera)</label><input type="month" id="mo" value="${S.month}" min="${today().slice(0,7)}"></div>`:`<div><label>Data</label><input type="date" id="dt" value="${S.date}" min="${today()}"></div><div><label>Fascia oraria</label><select id="sl">${Object.entries(SLOT).map(([k,l])=>`<option value="${k}" ${S.slot===k?'selected':''}>${l} · €${P[k]}</option>`).join('')}</select></div>`}</div>${S.mode==='mensile'?calendar():''}</div>
  <div class="glass card" data-tour="island"><h2>2 · Scrivanie</h2><div class="seg" id="show"><button data-k="piantina" class="${S.show==='piantina'?'on':''}">Piantina</button><button data-k="elenco" class="${S.show==='elenco'?'on':''}">Disposizione giornaliera</button></div>
  <div class="legend"><span><i style="background:#22c55e"></i>Libera</span><span><i style="background:#9ca3af"></i>Occupata</span><span><i style="background:#FF5B00"></i>Selezionata</span></div><div id="dk"></div></div>
  <div class="glass card" data-tour="pay"><h2>3 · Metodo di pagamento</h2><div class="pay">${Object.entries(PAY).map(([k,l])=>`<button data-k="${k}" class="${S.pay===k?'on':''}">${l}</button>`).join('')}</div></div>
- <div class="glass card sum"><div><div class="sub" style="margin:0">${S.desk?'Scrivania '+S.desk:'Nessuna scrivania'} · ${S.mode==='mensile'?'Mese '+S.month:S.date+' · '+SLOT[S.slot]}${S.pay?' · '+PAY[S.pay]:''}</div><div class="price">€${price}</div><div class="err" id="e"></div></div><button class="btn" id="go" ${S.desk&&S.pay?'':'disabled'}>${S.pay==='satispay'||S.pay==='paypal'?'Prenota e paga':'Prenota'}</button></div>`;
+ <div class="glass card sum"><div><div class="sub" style="margin:0">${S.desk?'Scrivania '+S.desk:'Nessuna scrivania'} · ${S.mode==='mensile'?'Mese '+S.month:S.date+' · '+SLOT[S.slot]}${S.pay?' · '+PAY[S.pay]:''}</div><div class="price">€${price}</div><div class="err" id="e">${esc(bookErr)}</div></div><button class="btn" id="go" ${S.desk&&S.pay?'':'disabled'}>${S.pay==='satispay'||S.pay==='paypal'?'Prenota e paga':'Prenota'}</button></div>`;
  const dk=$('#dk');
  const syncSum=()=>{const P=PLAN.pricing,price=S.mode==='mensile'?P.mensile:P[S.slot];const sub=$('.sum .sub'),pr=$('.sum .price'),go=$('#go');if(sub)sub.textContent=(S.desk?'Scrivania '+S.desk:'Nessuna scrivania')+' · '+(S.mode==='mensile'?'Mese '+S.month:S.date+' · '+SLOT[S.slot])+(S.pay?' · '+PAY[S.pay]:'');if(pr)pr.textContent='€'+price;if(go){go.disabled=!(S.desk&&S.pay);go.textContent=(S.pay==='satispay'||S.pay==='paypal')?'Prenota e paga':'Prenota'}};
  const paintDesks=()=>{if(!dk)return;if(S.show==='piantina'){FloorPlan.render(dk,PLAN,state,pick)}else{dk.innerHTML=`<div class="desks">${PLAN.desks.map(d=>{const s=state(d.id);return`<button type="button" class="desk ${s}" data-id="${d.id}"><b>${d.label}</b><small>${(PLAN.zones.find(z=>z.id===d.zone)||{}).label||''} · ${s==='sel'?'Selezionata':s.includes('busy')?'Occupata':'Libera'}</small></button>`}).join('')}</div>`;dk.querySelectorAll('.desk').forEach(b=>b.onclick=()=>pick(b.dataset.id))}};
@@ -299,7 +318,7 @@ async function bookView(){const gen=paintGen;await loadOcc();try{const site=awai
 function calendar(){const[y,m]=S.month.split('-').map(Number),n=new Date(y,m,0).getDate(),off=(new Date(y,m-1,1).getDay()+6)%7;let h='LMMGVSD'.split('').map(c=>`<div class="h">${c}</div>`).join('')+'<div style="background:none"></div>'.repeat(off);
  for(let d=1;d<=n;d++){const ds=`${S.month}-${String(d).padStart(2,'0')}`,we=[0,6].includes(new Date(y,m-1,d).getDay()),c=S.occ.filter(b=>b.date===ds).length;h+=`<div class="${we?'we':c>=PLAN.desks.length?'full':''}">${d}<br><small style="color:var(--g)">${we?'–':(PLAN.desks.length-new Set(S.occ.filter(b=>b.date===ds).map(b=>b.deskId)).size)+' lib.'}</small></div>`}
  return`<label>Disponibilità del mese</label><div class="cal">${h}</div>`}
-async function mineView(){const b=await api('/api/bookings/mine');$('#m').innerHTML=`<h1>Le mie prenotazioni</h1><p class="sub">${b.filter(x=>x.status==='confermata').length} attive</p><div class="glass card"><div class="table-scroll"><table><tr><th>Data</th><th>Scrivania</th><th>Fascia</th><th>Tipo</th><th>Pagamento</th><th>Stato</th><th></th></tr>${b.map(x=>`<tr><td>${x.date}</td><td>${x.deskId}</td><td>${SLOT[x.slot]}</td><td>${x.mode}</td><td>${PAY[x.payment]||x.payment}</td><td><span class="pill ${x.status!=='confermata'?'off':''}">${x.status}</span></td><td>${x.status!=='annullata'?`${x.status==='in attesa di pagamento'?`<a class="btn sm" href="/pay/${x.payment}?g=${x.group}" target="_blank" rel="noopener">Paga</a> `:''}<button class="btn sm ghost" data-id="${x.id}">Annulla</button>`:''}</td></tr>`).join('')||'<tr><td colspan=7>Nessuna prenotazione</td></tr>'}</table></div></div>`;
+async function mineView(){let b;try{b=await api('/api/bookings/mine')}catch(e){$('#m').innerHTML=`<h1>Le mie prenotazioni</h1><p class="err">${esc(e.message||'Errore')}</p>`;return}$('#m').innerHTML=`<h1>Le mie prenotazioni</h1><p class="sub">${b.filter(x=>x.status==='confermata').length} attive</p><div class="glass card"><div class="table-scroll"><table><tr><th>Data</th><th>Scrivania</th><th>Fascia</th><th>Tipo</th><th>Pagamento</th><th>Stato</th><th></th></tr>${b.map(x=>`<tr><td>${x.date}</td><td>${x.deskId}</td><td>${SLOT[x.slot]}</td><td>${x.mode}</td><td>${PAY[x.payment]||x.payment}</td><td><span class="pill ${x.status!=='confermata'?'off':''}">${x.status}</span></td><td>${x.status!=='annullata'?`${x.status==='in attesa di pagamento'?`<a class="btn sm" href="/pay/${x.payment}?g=${x.group}" target="_blank" rel="noopener">Paga</a> `:''}<button class="btn sm ghost" data-id="${x.id}">Annulla</button>`:''}</td></tr>`).join('')||'<tr><td colspan=7>Nessuna prenotazione</td></tr>'}</table></div></div>`;
  $('#m').querySelectorAll('[data-id]').forEach(e=>e.onclick=async()=>{await api('/api/bookings/'+e.dataset.id,{method:'DELETE'});mineView()})}
 function seenLabel(iso){
   if(!iso) return 'agente mai visto';
@@ -400,6 +419,7 @@ async function adminView(){
  if(save)save.onclick=async()=>{msg.textContent='Salvo…';try{const body={mattina:+$('#pr-mattina').value,pomeriggio:+$('#pr-pomeriggio').value,giornata:+$('#pr-giornata').value,mensile:+$('#pr-mensile').value};const out=await api('/api/admin/pricing',{method:'PATCH',body});PLAN=await api('/api/floorplan');PLAN.pricing=out;msg.textContent='Prezzi aggiornati';}catch(err){msg.textContent=err.message||'Errore'}};
 }
 const esc=t=>String(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function svcNote(){if(!serviceMsg)return '';return `<div class="glass svc-down" role="status"><p class="err">${esc(serviceMsg)}</p><p class="sub">Il sito resta aperto. Accesso e prenotazioni riprendono da soli appena il database risponde.</p></div>`}
 const avatar=(cls='')=>ME.avatar?`<img class="av ${cls}" src="${ME.avatar}" alt="">`:`<span class="av ${cls} ini">${esc(ME.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</span>`;
 function welcome(){const h=new Date().getHours(),g=h<12?'Buongiorno':h<18?'Buon pomeriggio':'Buonasera';return`<section class="glass welcome rise"><div class="w-orb"></div><div class="w-av">${avatar('lg')}<i class="ring2"></i></div><div class="w-txt"><small>${g} · Base Luna Studio</small><h2 class="w-name">${esc(ME.name.split(' ')[0])}, <span class="grad">crea sulla Luna.</span></h2><p>${ME.bio?esc(ME.bio):'Racconta chi sei: aggiungi una foto e due righe su di te.'}</p>${ME.title?`<span class="chip-s">${esc(ME.title)}</span>`:''}</div><button class="btn ghost sm" id="goprof">${ME.bio||ME.avatar?'Modifica profilo':'Completa il profilo →'}</button></section>`}
 document.addEventListener('click',e=>{if(e.target.id==='goprof'){view='profilo';render()}});

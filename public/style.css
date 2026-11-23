@@ -1130,6 +1130,9 @@ nav a.nav-guida:hover{color:#fff;background:rgba(255,255,255,.08)}
 .adm-facts b{font-size:26px;letter-spacing:-.04em}
 .adm-facts span{color:var(--g);font-size:14px;text-align:right}
 .adm-empty{color:var(--g)!important;background:transparent!important;border:0!important;padding-left:0!important}
+.svc-down{margin:18px auto 0;max-width:920px;padding:14px 18px}
+.svc-down p{margin:0}
+.svc-down .sub{margin-top:6px}
 @media(max-width:800px){
   .adm-grid{grid-template-columns:1fr}
   .adm-span{grid-column:auto}

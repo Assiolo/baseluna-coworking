@@ -4,6 +4,11 @@ const crypto = require('crypto');
 const { Pool } = require('pg');
 
 let pool;
+let ready = false;
+
+function isReady() {
+  return ready;
+}
 
 // node-postgres 8.13+ treats sslmode=require as verify-full, which rejects
 // Neon's certificate chain. Strip sslmode and set ssl explicitly when the
@@ -521,10 +526,13 @@ async function init({ connectionString, importPath, floorplanPath, publicRoot, c
     const avatars = await importLocalAvatars(publicRoot, compressAvatar);
     if (avatars.imported) console.log(`Avatar importati dal disco in Postgres: ${avatars.imported}`);
     if (avatars.cleared) console.log(`Avatar locali assenti, campo svuotato: ${avatars.cleared}`);
+    ready = true;
     return result;
   } catch (err) {
-    await pool.end().catch(() => {});
+    ready = false;
+    const dying = pool;
     pool = null;
+    if (dying) await dying.end().catch(() => {});
     throw err;
   }
 }
@@ -534,6 +542,7 @@ async function ping() {
 }
 
 async function close() {
+  ready = false;
   if (!pool) return;
   const p = pool;
   pool = null;
@@ -865,6 +874,7 @@ async function cancelMonth(month) {
 
 module.exports = {
   init,
+  isReady,
   ping,
   close,
   getPool,

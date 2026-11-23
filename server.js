@@ -29,6 +29,15 @@ const linkFor = (m, amt) => {
 
 const app = express();
 app.set('trust proxy', 1);
+
+const DB_DOWN = { ok: false, error: 'Servizio temporaneamente non disponibile, riprova più tardi' };
+
+app.use((q, s, next) => {
+  const p = q.path || '';
+  if (!p.startsWith('/api/') || p === '/api/site' || p === '/api/hots' || db.isReady()) return next();
+  s.status(503).json(DB_DOWN);
+});
+
 printRoutes.mountWebhook(app);
 app.use(express.json({ limit: '8mb' }), cp(), express.static(path.join(__dirname, 'public')));
 
@@ -382,8 +391,20 @@ app.use((err, q, s, next) => {
 });
 
 let server;
+let retryTimer = null;
+let dbUrl = '';
+
+// Neon free sospende il compute dopo circa 5 minuti senza query.
+// I tentativi non devono essere più frequenti: al ritorno della quota
+// un retry più fitto terrebbe il database sveglio. Al primo successo
+// il timer non viene più armato e non c'è alcun ping periodico.
+const DB_RETRY_MS = 5 * 60 * 1000;
 
 function shutdown() {
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
   const done = () => db.close().catch(() => {}).finally(() => process.exit(0));
   if (server) server.close(done);
   else done();
@@ -391,28 +412,47 @@ function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-async function boot() {
-  const url = process.env.DATABASE_URL;
-  if (!url || !String(url).trim()) {
-    console.error('FATAL: DATABASE_URL non impostata. Il server non parte: utenti, sessioni, prenotazioni, pagamenti, prezzi dei pacchetti e avatar stanno su Postgres. Nessun ripiego su file locali, perché il disco viene azzerato a ogni deploy su Render.');
-    process.exit(1);
-  }
+function scheduleDbRetry() {
+  if (db.isReady() || retryTimer) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    runDbInit();
+  }, DB_RETRY_MS);
+  retryTimer.unref();
+}
+
+async function runDbInit() {
+  if (db.isReady()) return;
   try {
     await db.init({
-      connectionString: url.trim(),
+      connectionString: dbUrl,
       importPath: DB,
       floorplanPath: FP,
       publicRoot: path.join(__dirname, 'public'),
       compressAvatar,
     });
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    printRoutes.logConfig();
   } catch (err) {
     const message = String(err && err.message || err).replace(/postgres(?:ql)?:\/\/\S+/gi, 'postgres://***');
-    console.error('FATAL: connessione o schema Postgres non riusciti:', message);
+    console.error('Postgres non raggiungibile, nuovo tentativo tra 5 minuti:', message);
+    scheduleDbRetry();
+  }
+}
+
+function boot() {
+  const url = process.env.DATABASE_URL;
+  if (!url || !String(url).trim()) {
+    console.error('FATAL: DATABASE_URL non impostata. Il server non parte: utenti, sessioni, prenotazioni, pagamenti, prezzi dei pacchetti e avatar stanno su Postgres. Nessun ripiego su file locali, perché il disco viene azzerato a ogni deploy su Render.');
     process.exit(1);
   }
-  printRoutes.logConfig();
+  dbUrl = String(url).trim();
   const PORT = process.env.PORT || 5173;
   server = app.listen(PORT, '0.0.0.0', () => console.log('Base Luna Coworking su http://localhost:' + PORT));
+  runDbInit();
 }
 
 boot();
